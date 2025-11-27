@@ -1,37 +1,37 @@
 /.vscode/
-# /.tests/
-# /tests/
-# build/
-# *.test_status
+/.tests/
+/tests/
+build/
+*.test_status
 
-# # Pintos 빌드 중간 파일 및 산출물
-# *.o
-# *.d
-# *.out
-# *.bin
-# *.elf
-# *.img
-# *.map
-# *.lst
-# *.log
-# *.qemu
-# *.raw
-# *.hex
-# *.dis
-# *.dump
+# Pintos 빌드 중간 파일 및 산출물
+*.o
+*.d
+*.out
+*.bin
+*.elf
+*.img
+*.map
+*.lst
+*.log
+*.qemu
+*.raw
+*.hex
+*.dis
+*.dump
 
-# # 빌드 디렉터리
-# /build/
-# /bin/
-# /obj/
-# /output/
+# 빌드 디렉터리
+/build/
+/bin/
+/obj/
+/output/
 
-# # core dump
-# core
+# core dump
+core
 
-# # 임시 파일
-# *~
-# *.swp
+# 임시 파일
+*~
+*.swp
 
-# # macOS
-# .DS_Store
+# macOS
+.DS_Store
