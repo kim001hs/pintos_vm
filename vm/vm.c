@@ -67,11 +67,11 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 		}
 		new_page->writable = writable;
 		bool (*page_initializer)(struct page *, enum vm_type, void *);
-		if (type == VM_ANON)
+		if (VM_TYPE(type) & VM_ANON)
 		{
 			page_initializer = anon_initializer;
 		}
-		else if (type == VM_FILE)
+		else if (VM_TYPE(type) & VM_FILE)
 		{
 			page_initializer = file_backed_initializer;
 		}
@@ -119,8 +119,9 @@ bool spt_insert_page(struct supplemental_page_table *spt, struct page *page)
 
 void spt_remove_page(struct supplemental_page_table *spt, struct page *page)
 {
+	hash_delete(&spt->spt_hash, &page->hash_elem);
 	vm_dealloc_page(page);
-	return true;
+	// return true; // void인데 왜 리턴?
 }
 
 /* Get the struct frame, that will be evicted. */
@@ -237,7 +238,7 @@ vm_do_claim_page(struct page *page)
 	page->frame = frame;
 
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
-
+	pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable);
 	return swap_in(page, frame->kva);
 }
 
