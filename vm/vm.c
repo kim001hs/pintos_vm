@@ -1,6 +1,7 @@
 /* vm.c: Generic interface for virtual memory objects. */
 
 #include "threads/malloc.h"
+#include "threads/palloc.h"
 #include "threads/vaddr.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
@@ -129,6 +130,9 @@ vm_get_victim(void)
 	struct frame *victim = NULL;
 	/* TODO: The policy for eviction is up to you. */
 
+	// 프레임 테이블이 필요
+	// LRU??
+
 	return victim;
 }
 
@@ -137,10 +141,23 @@ vm_get_victim(void)
 static struct frame *
 vm_evict_frame(void)
 {
-	struct frame *victim UNUSED = vm_get_victim();
+	struct frame *victim = vm_get_victim();
 	/* TODO: swap out the victim and return the evicted frame. */
-
-	return NULL;
+	if (victim == NULL)
+	{
+		return NULL;
+	}
+	struct page *page = victim->page;
+	if (page != NULL)
+	{
+		if (!swap_out(page))
+		{
+			return NULL;
+		}
+		page->frame = NULL;
+	}
+	victim->page = NULL;
+	return victim;
 }
 
 /* palloc() and get frame. If there is no available page, evict the page
@@ -152,6 +169,17 @@ vm_get_frame(void)
 {
 	struct frame *frame = NULL;
 	/* TODO: Fill this function. */
+	void *new_kva = palloc_get_page(PAL_USER); // 0으로 초기화 해야되나??
+	if (new_kva != NULL)
+	{
+		frame = (struct frame *)malloc(sizeof(struct frame));
+		frame->kva = new_kva;
+		frame->page = NULL;
+	}
+	else
+	{
+		frame = vm_evict_frame();
+	}
 	ASSERT(frame != NULL);
 	ASSERT(frame->page == NULL);
 	return frame;
