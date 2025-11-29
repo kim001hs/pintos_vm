@@ -3,6 +3,7 @@
 #include "threads/malloc.h"
 #include "vm/vm.h"
 #include "vm/inspect.h"
+#include "hash.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -119,7 +120,6 @@ vm_get_frame(void)
 {
 	struct frame *frame = NULL;
 	/* TODO: Fill this function. */
-
 	ASSERT(frame != NULL);
 	ASSERT(frame->page == NULL);
 	return frame;
@@ -182,8 +182,9 @@ vm_do_claim_page(struct page *page)
 }
 
 /* Initialize new supplemental page table */
-void supplemental_page_table_init(struct supplemental_page_table *spt UNUSED)
+void supplemental_page_table_init(struct supplemental_page_table *spt)
 {
+	hash_init(&spt->spt_hash, hash_hash, hash_less, NULL);
 }
 
 /* Copy supplemental page table from src to dst */
@@ -197,4 +198,17 @@ void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED)
 {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+}
+
+uint64_t hash_hash(const struct hash_elem *e, void *aux UNUSED)
+{
+	struct page *p = hash_entry(e, struct page, hash_elem);
+	return hash_bytes(&p->va, sizeof(p->va));
+}
+
+bool hash_less(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED)
+{
+	struct page *pa = hash_entry(a, struct page, hash_elem);
+	struct page *pb = hash_entry(b, struct page, hash_elem);
+	return pa->va < pb->va;
 }
