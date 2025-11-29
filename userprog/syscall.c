@@ -14,6 +14,7 @@
 #include <string.h>
 #include "threads/palloc.h"
 #include "threads/malloc.h"
+#include "vm/vm.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -428,10 +429,12 @@ static int s_dup2(int oldfd, int newfd)
 
 static void s_check_access(const char *file)
 {
-	if (file == NULL || !is_user_vaddr(file) || pml4_get_page(thread_current()->pml4, file) == NULL)
-	{
+	if (file == NULL || !is_user_vaddr(file))
 		s_exit(-1);
-	}
+
+	struct page *page = spt_find_page(&thread_current()->spt, file);
+	if (page == NULL)
+		s_exit(-1);
 }
 
 static void s_check_buffer(const void *buffer, unsigned length)
