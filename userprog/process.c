@@ -855,7 +855,7 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
-		ofs += PGSIZE; // seek를 매번 해야하니까 오프셋도 변경해야함
+		ofs += page_read_bytes; // seek를 매번 해야하니까 오프셋도 변경해야함
 	}
 	return true;
 }
@@ -871,7 +871,14 @@ setup_stack(struct intr_frame *if_)
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
-
+	if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true))
+	{
+		success = vm_claim_page(stack_bottom);
+		if (success)
+		{
+			if_->rsp = USER_STACK;
+		}
+	}
 	return success;
 }
 

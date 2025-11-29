@@ -8,6 +8,7 @@
 #include "hash.h"
 #include "threads/mmu.h"
 
+static struct list frame_table;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
 void vm_init(void)
@@ -65,7 +66,6 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 		{
 			goto err;
 		}
-		new_page->writable = writable;
 		bool (*page_initializer)(struct page *, enum vm_type, void *);
 		if (VM_TYPE(type) & VM_ANON)
 		{
@@ -80,6 +80,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 			goto err;
 		}
 		uninit_new(new_page, upage, init, type, aux, page_initializer);
+		new_page->writable = writable;
 		/* TODO: Insert the page into the spt. */
 		if (!spt_insert_page(spt, new_page))
 		{
@@ -96,15 +97,19 @@ err:
 struct page *
 spt_find_page(struct supplemental_page_table *spt, void *va)
 {
-	struct page *page = NULL;
+	struct page *page;
 	/* TODO: Fill this function. */
-	struct page temp;
-	temp.va = pg_round_down(va);
+	struct page *temp = malloc(sizeof(struct page));
+	temp->va = pg_round_down(va);
 
-	struct hash_elem *e = hash_find(&spt->spt_hash, &temp.hash_elem);
+	struct hash_elem *e = hash_find(&spt->spt_hash, &temp->hash_elem);
 	if (e == NULL)
+	{
+		free(temp);
 		return NULL;
+	}
 	page = hash_entry(e, struct page, hash_elem);
+	free(temp);
 	return page;
 }
 
@@ -170,12 +175,17 @@ vm_get_frame(void)
 {
 	struct frame *frame = NULL;
 	/* TODO: Fill this function. */
-	void *new_kva = palloc_get_page(PAL_USER); // 0으로 초기화 해야되나??
+	void *new_kva = palloc_get_page(PAL_USER | PAL_ZERO); // 0으로 초기화 해야되나??
 	if (new_kva != NULL)
 	{
 		frame = (struct frame *)malloc(sizeof(struct frame));
+		if (frame == NULL)
+		{
+			return NULL;
+		}
 		frame->kva = new_kva;
 		frame->page = NULL;
+		// list_push_back(&frame_table, &frame->list_elem);
 	}
 	else
 	{
@@ -203,10 +213,14 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
 						 bool user UNUSED, bool write UNUSED, bool not_present UNUSED)
 {
 	struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
-	struct page *page = NULL;
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
-
+	void *va = pg_round_down(addr);
+	struct page *page = spt_find_page(spt, va);
+	if (!page)
+	{
+		return false;
+	}
 	return vm_do_claim_page(page);
 }
 
@@ -219,11 +233,14 @@ void vm_dealloc_page(struct page *page)
 }
 
 /* Claim the page that allocate on VA. */
-bool vm_claim_page(void *va UNUSED)
+bool vm_claim_page(void *va)
 {
-	struct page *page = NULL;
+	struct page *page = spt_find_page(&thread_current()->spt, va);
 	/* TODO: Fill this function */
-
+	if (page == NULL)
+	{
+		return false;
+	}
 	return vm_do_claim_page(page);
 }
 
@@ -236,9 +253,11 @@ vm_do_claim_page(struct page *page)
 	/* Set links */
 	frame->page = page;
 	page->frame = frame;
-
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
-	pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable);
+	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable))
+	{
+		return false;
+	}
 	return swap_in(page, frame->kva);
 }
 
