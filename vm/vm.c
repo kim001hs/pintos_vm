@@ -5,6 +5,7 @@
 #include "vm/vm.h"
 #include "vm/inspect.h"
 #include "hash.h"
+#include "threads/mmu.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -107,12 +108,11 @@ spt_find_page(struct supplemental_page_table *spt, void *va)
 }
 
 /* Insert PAGE into spt with validation. */
-bool spt_insert_page(struct supplemental_page_table *spt UNUSED,
-					 struct page *page UNUSED)
+bool spt_insert_page(struct supplemental_page_table *spt, struct page *page)
 {
 	int succ = false;
 	/* TODO: Fill this function. */
-
+	succ = (hash_insert(&spt->spt_hash, &page->hash_elem) == NULL);
 	return succ;
 }
 
