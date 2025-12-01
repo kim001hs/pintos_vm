@@ -51,7 +51,7 @@ struct page
 	/* Your implementation */
 	struct hash_elem hash_elem;
 	bool writable;
-
+	int last_used_tick;
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
 	union
@@ -70,7 +70,7 @@ struct frame
 {
 	void *kva;
 	struct page *page;
-	struct list_elem list_elem;
+	struct list_elem frame_elem;
 };
 
 /* The function table for page operations.
@@ -123,4 +123,5 @@ enum vm_type page_get_type(struct page *page);
 
 uint64_t hash_hash(const struct hash_elem *e, void *aux UNUSED);
 bool hash_less(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
+bool lru_less(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
 #endif /* VM_VM_H */
