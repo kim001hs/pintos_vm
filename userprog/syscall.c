@@ -429,8 +429,15 @@ static int s_dup2(int oldfd, int newfd)
 
 static void s_check_access(const char *file)
 {
-	if (file == NULL || !is_user_vaddr(file) || !spt_find_page(&thread_current()->spt, file))
+	if (file == NULL || !is_user_vaddr(file))
 		s_exit(-1);
+#ifdef VM
+	if (!spt_find_page(&thread_current()->spt, file))
+		s_exit(-1);
+#else
+	if (!pml4_get_page(thread_current()->pml4, file))
+		s_exit(-1);
+#endif
 }
 
 static void s_check_buffer(const void *buffer, unsigned length)

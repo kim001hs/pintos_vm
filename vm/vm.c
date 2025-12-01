@@ -228,6 +228,7 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
  * DO NOT MODIFY THIS FUNCTION. */
 void vm_dealloc_page(struct page *page)
 {
+	hash_delete(&thread_current()->spt.spt_hash, &page->hash_elem);
 	destroy(page);
 	free(page);
 }
