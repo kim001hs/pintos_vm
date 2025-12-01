@@ -7,6 +7,7 @@
 #include "vm/inspect.h"
 #include "hash.h"
 #include "threads/mmu.h"
+#include "devices/timer.h"
 
 static struct list frame_table;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
@@ -20,7 +21,8 @@ void vm_init(void)
 #endif
 	register_inspect_intr();
 	/* DO NOT MODIFY UPPER LINES. */
-	/* TODO: Your code goes here. */
+	/* TODO: Your code goes here. */;
+	list_init(&frame_table);
 }
 
 /* Get the type of the page. This function is useful if you want to know the
@@ -81,6 +83,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 		}
 		uninit_new(new_page, upage, init, type, aux, page_initializer);
 		new_page->writable = writable;
+		new_page->last_used_tick = timer_ticks();
 		/* TODO: Insert the page into the spt. */
 		if (!spt_insert_page(spt, new_page))
 		{
@@ -103,13 +106,13 @@ spt_find_page(struct supplemental_page_table *spt, void *va)
 	temp->va = pg_round_down(va);
 
 	struct hash_elem *e = hash_find(&spt->spt_hash, &temp->hash_elem);
+	free(temp);
 	if (e == NULL)
 	{
-		free(temp);
 		return NULL;
 	}
 	page = hash_entry(e, struct page, hash_elem);
-	free(temp);
+	page->last_used_tick = timer_ticks();
 	return page;
 }
 
@@ -136,9 +139,10 @@ vm_get_victim(void)
 	struct frame *victim = NULL;
 	/* TODO: The policy for eviction is up to you. */
 
-	// 프레임 테이블이 필요
-	// LRU??
-
+	if (!list_empty(&frame_table))
+	{
+		victim = list_entry(list_max(&frame_table, lru_less, NULL), struct frame, frame_elem);
+	}
 	return victim;
 }
 
@@ -185,7 +189,7 @@ vm_get_frame(void)
 		}
 		frame->kva = new_kva;
 		frame->page = NULL;
-		// list_push_back(&frame_table, &frame->list_elem);
+		list_push_back(&frame_table, &frame->frame_elem);
 	}
 	else
 	{
@@ -254,12 +258,11 @@ vm_do_claim_page(struct page *page)
 	frame->page = page;
 	page->frame = frame;
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
-	// lazy loading 여기서 호출??
 	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable))
 	{
 		return false;
 	}
-	return swap_in(page, frame->kva);
+	return swap_in(page, frame->kva); // lazy_loading
 }
 
 /* Initialize new supplemental page table */
@@ -292,4 +295,18 @@ bool hash_less(const struct hash_elem *a, const struct hash_elem *b, void *aux U
 	struct page *pa = hash_entry(a, struct page, hash_elem);
 	struct page *pb = hash_entry(b, struct page, hash_elem);
 	return pa->va < pb->va;
+}
+
+bool lru_less(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
+{
+	struct frame *fa = list_entry(a, struct frame, frame_elem);
+	struct frame *fb = list_entry(b, struct frame, frame_elem);
+
+	struct page *pa = fa->page;
+	struct page *pb = fb->page;
+
+	int a_tick = pa ? pa->last_used_tick : 0;
+	int b_tick = pb ? pb->last_used_tick : 0;
+
+	return a_tick < b_tick;
 }
