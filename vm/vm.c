@@ -228,7 +228,6 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
  * DO NOT MODIFY THIS FUNCTION. */
 void vm_dealloc_page(struct page *page)
 {
-	hash_delete(&thread_current()->spt.spt_hash, &page->hash_elem);
 	destroy(page);
 	free(page);
 }
@@ -255,6 +254,7 @@ vm_do_claim_page(struct page *page)
 	frame->page = page;
 	page->frame = frame;
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
+	// lazy loading 여기서 호출??
 	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable))
 	{
 		return false;
