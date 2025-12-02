@@ -8,7 +8,7 @@
 #include "hash.h"
 #include "threads/mmu.h"
 #include "devices/timer.h"
-
+#include <string.h>
 static struct list frame_table;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -216,7 +216,7 @@ vm_handle_wp(struct page *page UNUSED)
 bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
 						 bool user UNUSED, bool write UNUSED, bool not_present UNUSED)
 {
-	struct supplemental_page_table *spt UNUSED = &thread_current()->spt;
+	struct supplemental_page_table *spt = &thread_current()->spt;
 	/* TODO: Validate the fault */
 	/* TODO: Your code goes here */
 	void *va = pg_round_down(addr);
@@ -224,6 +224,11 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
 	if (!page)
 	{
 		return false;
+	}
+	// 이미 물리 메모리에 있으면 pml4만 다시 설정
+	if (page->frame != NULL)
+	{
+		return pml4_set_page(thread_current()->pml4, page->va, page->frame->kva, page->writable);
 	}
 	return vm_do_claim_page(page);
 }
@@ -272,16 +277,48 @@ void supplemental_page_table_init(struct supplemental_page_table *spt)
 }
 
 /* Copy supplemental page table from src to dst */
-bool supplemental_page_table_copy(struct supplemental_page_table *dst UNUSED,
-								  struct supplemental_page_table *src UNUSED)
+bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct supplemental_page_table *src)
 {
-}
+	// - `src`의 보조 페이지 테이블을 `dst`에 복사
+	// - fork 시 부모의 실행 컨텍스트를 자식에게 복사할 때 사용
+	// - 각 페이지를 순회하며 `uninit_page`로 생성하고 **즉시 claim 처리**해야 함
+	// 부모 페이지도 uninit이면 lazy loading?
+	// 아니면 바로 claim -> 이미 있는 프레임 연결만 시키면 되나 -> 부모를 swap out시키고 자식은 연결만
+	// src가 UNINIT이면 그냥 uninit_new 복붙하면 됨
+	// 아니면 연결된 프레임이 NULL이 아니라면 그냥 memcpy하고 NULL이면 스왑 테이블을 이용해서 가져오기
+	struct hash_iterator temp;
+	hash_first(&temp, &src->spt_hash);
+	while (hash_next(&temp))
+	{
+		struct page *src_page = hash_entry(hash_cur(&temp), struct page, hash_elem);
+		enum vm_type type = VM_TYPE(src_page->operations->type);
+		// UNINIT 페이지는 먼저 부모에서 claim해서 실제 타입으로 변환
+		if (type == VM_UNINIT)
+		{
+			// 부모 페이지를 먼저 로드
+			if (!vm_do_claim_page(src_page))
+				return false;
+			type = VM_TYPE(src_page->operations->type);
+		}
 
+		if (type == VM_ANON || type == VM_FILE)
+		{
+			if (!vm_alloc_page(type, src_page->va, src_page->writable))
+				return false;
+			if (!vm_claim_page(src_page->va))
+				return false;
+			struct page *dst_page = spt_find_page(dst, src_page->va);
+			memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+		}
+	}
+	return true;
+}
 /* Free the resource hold by the supplemental page table */
-void supplemental_page_table_kill(struct supplemental_page_table *spt UNUSED)
+void supplemental_page_table_kill(struct supplemental_page_table *spt)
 {
 	/* TODO: Destroy all the supplemental_page_table hold by thread and
 	 * TODO: writeback all the modified contents to the storage. */
+	hash_destroy(&spt->spt_hash, hash_destructor);
 }
 
 uint64_t hash_hash(const struct hash_elem *e, void *aux UNUSED)
@@ -309,4 +346,10 @@ bool lru_less(const struct list_elem *a, const struct list_elem *b, void *aux UN
 	int b_tick = pb ? pb->last_used_tick : 0;
 
 	return a_tick < b_tick;
+}
+
+void hash_destructor(struct hash_elem *e, void *aux)
+{
+	struct page *page = hash_entry(e, struct page, hash_elem);
+	vm_dealloc_page(page);
 }

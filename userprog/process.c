@@ -22,6 +22,7 @@
 #include "devices/timer.h"
 #include "lib/stdio.h"
 #include "threads/malloc.h"
+#include "userprog/syscall.h"
 
 #ifdef VM
 #include "vm/vm.h"
@@ -269,7 +270,9 @@ int process_exec(void *f_name)
 
 	/* We first kill the current context */
 	process_cleanup();
-
+#ifdef VM
+	supplemental_page_table_init(&thread_current()->spt);
+#endif
 	/* And then load the binary */
 	success = load(file_name, &_if);
 
@@ -783,6 +786,12 @@ lazy_load_segment(struct page *page, struct new_aux *aux)
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+	bool lock_acquired = false;
+	if (!lock_held_by_current_thread(&filesys_lock))
+	{
+		lock_acquire(&filesys_lock);
+		lock_acquired = true;
+	}
 	size_t page_read_bytes = aux->page_read_bytes;
 	size_t page_zero_bytes = PGSIZE - page_read_bytes;
 	struct file *file = aux->file;
@@ -793,16 +802,27 @@ lazy_load_segment(struct page *page, struct new_aux *aux)
 	uint8_t *kpage = page->frame->kva;
 	if (kpage == NULL)
 	{
+		if (lock_acquired)
+		{
+			lock_release(&filesys_lock);
+		}
 		return false;
 	}
 
 	/* Load this page. */
 	if (file_read(file, kpage, page_read_bytes) != (int)page_read_bytes)
 	{
+		if (lock_acquired)
+		{
+			lock_release(&filesys_lock);
+		}
 		return false;
 	}
 	memset(kpage + page_read_bytes, 0, page_zero_bytes);
-
+	if (lock_acquired)
+	{
+		lock_release(&filesys_lock);
+	}
 	return true;
 }
 

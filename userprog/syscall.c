@@ -25,7 +25,7 @@ void syscall_handler(struct intr_frame *);
    Pintos에는 파일별 락이 없기 때문에,
    서로 다른 파일을 접근하는 경우라도
    현재 파일 시스템 콜이 끝날 때까지 대기해야 한다. */
-static struct lock filesys_lock;
+struct lock filesys_lock;
 
 static void s_halt(void) NO_RETURN;
 void s_exit(int status) NO_RETURN;

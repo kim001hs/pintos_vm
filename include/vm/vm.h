@@ -124,4 +124,5 @@ enum vm_type page_get_type(struct page *page);
 uint64_t hash_hash(const struct hash_elem *e, void *aux UNUSED);
 bool hash_less(const struct hash_elem *a, const struct hash_elem *b, void *aux UNUSED);
 bool lru_less(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED);
+void hash_destructor(struct hash_elem *e, void *aux);
 #endif /* VM_VM_H */
