@@ -1,7 +1,9 @@
 #ifndef VM_VM_H
 #define VM_VM_H
+
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include "lib/kernel/hash.h"
 
 enum vm_type
 {
@@ -34,6 +36,7 @@ enum vm_type
 
 struct page_operations;
 struct thread;
+struct intr_frame; /* [추가] 인터럽트 프레임 전방 선언 */
 
 #define VM_TYPE(type) ((type) & 7)
 
@@ -44,8 +47,11 @@ struct thread;
 struct page
 {
 	const struct page_operations *operations;
-	void *va;			 /* Address in terms of user space */
-	struct frame *frame; /* Back reference for frame */
+	void *va;					/* Address in terms of user space */
+	struct frame *frame;		/* Back reference for frame */
+	struct hash_elem hash_elem; /* Hash table element */
+	bool writable;
+	bool accessible; /* [참고] 필요 시 접근성 제어를 위한 플래그 추가 가능 */
 
 	/* Your implementation */
 
@@ -92,9 +98,11 @@ struct page_operations
  * All designs up to you for this. */
 struct supplemental_page_table
 {
+	struct hash hash;
 };
 
-#include "threads/thread.h"
+/* [삭제] struct thread; 중복 선언 제거됨 */
+
 void supplemental_page_table_init(struct supplemental_page_table *spt);
 bool supplemental_page_table_copy(struct supplemental_page_table *dst,
 								  struct supplemental_page_table *src);

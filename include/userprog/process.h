@@ -17,4 +17,12 @@ struct aux
     struct intr_frame *if_;
     struct thread *thread;
 };
+/* lazy_load_segment에 전달할 정보 구조체 */
+struct lazy_load_info
+{
+    struct file *file;
+    off_t ofs;
+    uint32_t read_bytes;
+    uint32_t zero_bytes;
+};
 #endif /* userprog/process.h */

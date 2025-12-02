@@ -22,11 +22,9 @@
 #include "devices/timer.h"
 #include "lib/stdio.h"
 #include "threads/malloc.h"
-
-#ifdef VM
 #include "vm/vm.h"
-#endif
 #define FD_TABLE_SIZE 2
+#define VM
 
 static void process_cleanup(void);
 static bool load(const char *file_name, struct intr_frame *if_);
@@ -277,6 +275,7 @@ int process_exec(void *f_name)
 	/* If load failed, quit. */
 	if (!success)
 	{
+		// load에서 실패함
 		return -1;
 	}
 
@@ -471,7 +470,9 @@ load(const char *file_name, struct intr_frame *if_)
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create();
 	if (t->pml4 == NULL)
+	{
 		goto done;
+	}
 	process_activate(thread_current());
 
 	// 파싱하기 (file_name은 이미 s_exec에서 복사본이므로 수정 가능)
@@ -554,8 +555,9 @@ load(const char *file_name, struct intr_frame *if_)
 
 	/* Set up stack. */
 	if (!setup_stack(if_))
+	{
 		goto done;
-
+	}
 	/* Start address. */
 	if_->rip = ehdr.e_entry;
 
@@ -777,6 +779,21 @@ lazy_load_segment(struct page *page, void *aux)
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+	struct lazy_load_info *info = (struct lazy_load_info *)aux;
+
+	file_seek(info->file, info->ofs);
+
+	int read_bytes = file_read(info->file, page->frame->kva, info->read_bytes);
+
+	if (read_bytes != (int)info->read_bytes)
+	{
+		free(info);
+		return false;
+	}
+	memset(page->frame->kva + read_bytes, 0, info->zero_bytes);
+
+	free(info);
+	return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -810,15 +827,33 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
+		/* 1. 정보를 담을 구조체 할당 (Heap에 저장해야 나중에도 살아있음) */
+		struct lazy_load_info *aux = (struct lazy_load_info *)malloc(sizeof(struct lazy_load_info));
+		if (aux == NULL)
+		{
+			return false; // 메모리 부족 시 실패
+		}
+
+		/* 2. 데이터 포장 (Packing) */
+		/* file_reopen: 이 함수가 끝나도 파일이 닫히지 않도록 별도 객체 생성 */
+		aux->file = file_reopen(file);
+		aux->ofs = ofs;
+		aux->read_bytes = page_read_bytes;
+		aux->zero_bytes = page_zero_bytes;
+
+		/* 3. vm_alloc 호출 (aux 전달) */
+		/* VM_ANON 대신 VM_FILE을 써도 되지만, 실행 파일 로딩은 보통 VM_ANON으로 처리합니다 */
 		if (!vm_alloc_page_with_initializer(VM_ANON, upage,
 											writable, lazy_load_segment, aux))
+		{
+			free(aux); // 실패 시 할당했던 메모리 해제
 			return false;
-
+		}
 		/* Advance. */
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes;
 	}
 	return true;
 }
@@ -830,11 +865,15 @@ setup_stack(struct intr_frame *if_)
 	bool success = false;
 	void *stack_bottom = (void *)(((uint8_t *)USER_STACK) - PGSIZE);
 
-	/* TODO: Map the stack on stack_bottom and claim the page immediately.
-	 * TODO: If success, set the rsp accordingly.
-	 * TODO: You should mark the page is stack. */
-	/* TODO: Your code goes here */
-
+	if (vm_alloc_page(VM_ANON, stack_bottom, true) && vm_claim_page(stack_bottom))
+	{
+		success = true;
+		if_->rsp = USER_STACK;
+	}
+	else
+	{
+		success = false;
+	}
 	return success;
 }
 
