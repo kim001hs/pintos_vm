@@ -131,7 +131,7 @@ vm_evict_frame(void)
 사용 가능한 페이지가 없다면, 페이지를 축출(evict)하고 그것을 반환하라. 
 이 함수는 항상 유효한 주소를 반환한다. 
 즉, 유저 풀 메모리가 가득 찼을 경우, 
-이 함수는 이용 가능한 메모리 공간을 얻기 위해 프레임을 축출한다*/
+이 함수는 이용 가능한 메모리 공간을 얻기 위해 프레임을 축출한다 */
 static struct frame *
 vm_get_frame(void)
 { // 기능: frame 할당받기(페이지,sva 포함) -> 초기화하여 프레임 반환
@@ -205,7 +205,7 @@ bool vm_claim_page(void *va UNUSED)
 /* Claim the PAGE and set up the mmu. */
 static bool
 vm_do_claim_page(struct page *page)
-{
+{	//기능: 페이지->프레임 할당받아 mmap에 등록(=pte추가) => 성공여부 반환
 	struct frame *frame = vm_get_frame();
 
 	/* Set links */
