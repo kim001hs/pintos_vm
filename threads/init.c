@@ -155,9 +155,9 @@ paging_init(uint64_t mem_end)
 	//   [LOADER_KERN_BASE ~ LOADER_KERN_BASE + mem_end].
 	for (uint64_t pa = 0; pa < mem_end; pa += PGSIZE)
 	{
-		uint64_t va = (uint64_t)ptov(pa);
+		uint64_t va = (uint64_t)ptov(pa); //ptov(): Returns kernel virtual address at which physical address PADDR is mapped.
 
-		perm = PTE_P | PTE_W;
+		perm = PTE_P | PTE_W; //1=present , 0=R, 1=R/W _ [ 1 1 -> present + R/W ]
 		if ((uint64_t)&start <= va && va < (uint64_t)&_end_kernel_text)
 			perm &= ~PTE_W;
 

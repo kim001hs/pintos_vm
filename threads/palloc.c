@@ -284,12 +284,13 @@ palloc_init(void)
 	return ext_mem.end;
 }
 
-/* Obtains and returns a group of PAGE_CNT contiguous free pages.
-   If PAL_USER is set, the pages are obtained from the user pool,
-   otherwise from the kernel pool.  If PAL_ZERO is set in FLAGS,
-   then the pages are filled with zeros.  If too few pages are
-   available, returns a null pointer, unless PAL_ASSERT is set in
-   FLAGS, in which case the kernel panics. */
+/* 하나의 빈(free) 페이지를 가져와 그 페이지의 커널 가상 주소를 반환한다.
+PAL_USER가 설정되어 있으면 페이지는 유저 풀에서 얻고,
+그렇지 않으면 커널 풀에서 얻는다.
+FLAGS에 PAL_ZERO가 설정되어 있으면 그 페이지는 0으로 채워진다.
+만약 사용 가능한 페이지가 없다면,
+PAL_ASSERT가 FLAGS에 설정되어 있지 않은 한 널 포인터를 반환한다.
+하지만 PAL_ASSERT가 설정되어 있다면, 커널이 패닉을 일으킨다. */
 void *
 palloc_get_multiple(enum palloc_flags flags, size_t page_cnt)
 {
@@ -319,13 +320,13 @@ palloc_get_multiple(enum palloc_flags flags, size_t page_cnt)
 	return pages;
 }
 
-/* Obtains a single free page and returns its kernel virtual
-   address.
-   If PAL_USER is set, the page is obtained from the user pool,
-   otherwise from the kernel pool.  If PAL_ZERO is set in FLAGS,
-   then the page is filled with zeros.  If no pages are
-   available, returns a null pointer, unless PAL_ASSERT is set in
-   FLAGS, in which case the kernel panics. */
+/* 하나의 빈(free) 페이지를 가져와 그 페이지의 커널 가상 주소를 반환한다.
+PAL_USER가 설정되어 있으면 페이지는 유저 풀에서 얻고,
+그렇지 않으면 커널 풀에서 얻는다.
+FLAGS에 PAL_ZERO가 설정되어 있으면 그 페이지는 0으로 채워진다.
+만약 사용 가능한 페이지가 없다면,
+PAL_ASSERT가 FLAGS에 설정되어 있지 않은 한 널 포인터를 반환한다.
+하지만 PAL_ASSERT가 설정되어 있다면, 커널이 패닉을 일으킨다. */
 void *
 palloc_get_page(enum palloc_flags flags)
 {

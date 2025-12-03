@@ -31,17 +31,16 @@ struct hash_elem
 	struct list_elem list_elem;
 };
 
-/* Converts pointer to hash element HASH_ELEM into a pointer to
- * the structure that HASH_ELEM is embedded inside.  Supply the
- * name of the outer structure STRUCT and the member name MEMBER
- * of the hash element.  See the big comment at the top of the
- * file for an example. */
+/* 포인터 HASH_ELEM을, 그 HASH_ELEM이 포함(내장)되어 있는 바깥 구조체(STRUCT 타입)의 포인터로 변환한다.
+STRUCT는 바깥 구조체의 이름을, MEMBER는 그 구조체 안에서 hash element가 들어 있는 멤버의 이름을 지정한다.
+사용 예시는 이 파일 맨 위에 있는 큰 주석을 참고하라. -ex) (e,struct page,h_elem) */
 #define hash_entry(HASH_ELEM, STRUCT, MEMBER) \
 	((STRUCT *)((uint8_t *)&(HASH_ELEM)->list_elem - offsetof(STRUCT, MEMBER.list_elem)))
 
 /* Computes and returns the hash value for hash element E, given
  * auxiliary data AUX. */
 typedef uint64_t hash_hash_func(const struct hash_elem *e, void *aux);
+//-> 요소에서 키 뽑아서 해시값 계산해라
 
 /* Compares the value of two hash elements A and B, given
  * auxiliary data AUX.  Returns true if A is less than B, or
@@ -49,11 +48,12 @@ typedef uint64_t hash_hash_func(const struct hash_elem *e, void *aux);
 typedef bool hash_less_func(const struct hash_elem *a,
 							const struct hash_elem *b,
 							void *aux);
+//-> 요소 둘 비교해서 정렬 기준 제공해라
 
 /* Performs some operation on hash element E, given auxiliary
  * data AUX. */
 typedef void hash_action_func(struct hash_elem *e, void *aux);
-
+//-> hash 각 요소에 적용할 action함수
 /* Hash table. */
 struct hash
 {
@@ -79,16 +79,16 @@ void hash_clear(struct hash *, hash_action_func *);
 void hash_destroy(struct hash *, hash_action_func *);
 
 /* Search, insertion, deletion. */
-struct hash_elem *hash_insert(struct hash *, struct hash_elem *);
+struct hash_elem *hash_insert(struct hash *, struct hash_elem *); //
 struct hash_elem *hash_replace(struct hash *, struct hash_elem *);
-struct hash_elem *hash_find(struct hash *, struct hash_elem *);
+struct hash_elem *hash_find(struct hash *, struct hash_elem *); //ht,elem->해당 elem 존재하는지 확인
 struct hash_elem *hash_delete(struct hash *, struct hash_elem *);
 
 /* Iteration. */
-void hash_apply(struct hash *, hash_action_func *);
-void hash_first(struct hash_iterator *, struct hash *);
-struct hash_elem *hash_next(struct hash_iterator *);
-struct hash_elem *hash_cur(struct hash_iterator *);
+void hash_apply(struct hash *, hash_action_func *); //해시 테이블 H 안의 각 요소에 대해, 임의의 순서로 ACTION을 호출
+void hash_first(struct hash_iterator *, struct hash *); //해시 테이블 H를 순회(iterate)하기 위해 I를 초기화
+struct hash_elem *hash_next(struct hash_iterator *); //현재 iterator가 가리키는 위치에서 “다음 요소”를 찾아서 iterator를 그쪽으로 이동시키고 포인터 반환
+struct hash_elem *hash_cur(struct hash_iterator *); //해시 테이블 순회(iteration)에서 현재 요소를 반환
 
 /* Information. */
 size_t hash_size(struct hash *);
