@@ -117,7 +117,7 @@ struct thread *get_thread_by_tid(tid_t child_tid)
 	}
 	return NULL;
 }
-
+/* VM에서 사라지는 기능들 ==================================== */
 #ifndef VM
 /* Duplicate the parent's address space by passing this function to the
  * pml4_for_each. This is only for the project 2. */
@@ -160,7 +160,7 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
 	return true;
 }
 #endif
-
+/* ========================================== */
 /* A thread function that copies parent's execution context.
  * Hint) parent->tf does not hold the userland context of the process.
  *       That is, you are required to pass second argument of process_fork to
