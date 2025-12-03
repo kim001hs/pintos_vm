@@ -9,6 +9,7 @@
 #include "threads/mmu.h"
 #include "devices/timer.h"
 #include <string.h>
+#include "userprog/syscall.h"
 static struct list frame_table;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -218,7 +219,7 @@ vm_handle_wp(struct page *page UNUSED)
 
 /* Return true on success */
 bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
-						 bool user UNUSED, bool write UNUSED, bool not_present UNUSED)
+						 bool user UNUSED, bool write, bool not_present UNUSED)
 {
 	struct supplemental_page_table *spt = &thread_current()->spt;
 	/* TODO: Validate the fault */
@@ -227,6 +228,15 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
 	struct page *page = spt_find_page(spt, va);
 	if (!page)
 	{
+		void *rsp = f->rsp;
+		if (!user)
+		{
+			rsp = thread_current()->rsp;
+		}
+		if (addr < (USER_STACK - (1 << 20)) || addr >= USER_STACK || addr < rsp - 8)
+		{
+			return false;
+		}
 		vm_stack_growth(va);
 		page = spt_find_page(spt, va);
 		if (!page)
@@ -234,10 +244,9 @@ bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
 			return false;
 		}
 	}
-	// 이미 물리 메모리에 있으면 pml4만 다시 설정
-	if (page->frame != NULL)
+	if (write && !page->writable)
 	{
-		return pml4_set_page(thread_current()->pml4, page->va, page->frame->kva, page->writable);
+		return false;
 	}
 	return vm_do_claim_page(page);
 }

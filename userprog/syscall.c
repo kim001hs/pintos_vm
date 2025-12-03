@@ -75,8 +75,11 @@ void syscall_init(void)
 }
 
 /* The main system call interface */
-void syscall_handler(struct intr_frame *f UNUSED)
+void syscall_handler(struct intr_frame *f)
 {
+#ifdef VM
+	thread_current()->rsp = f->rsp;
+#endif
 	// TODO: Your implementation goes here.
 	// %rdi, %rsi, %rdx, %r10, %r8, %r9: 시스템 콜 인자
 	switch (f->R.rax)
@@ -432,7 +435,9 @@ static void s_check_access(const char *file)
 	if (file == NULL || !is_user_vaddr(file))
 		s_exit(-1);
 #ifdef VM
-	if (!spt_find_page(&thread_current()->spt, file))
+	if ((USER_STACK - (1 << 20)) < file && file < USER_STACK)
+		return;
+	else if (!spt_find_page(&thread_current()->spt, file))
 		s_exit(-1);
 #else
 	if (!pml4_get_page(thread_current()->pml4, file))
@@ -446,13 +451,17 @@ static void s_check_buffer(const void *buffer, unsigned length)
 		s_exit(-1);
 	const uint8_t *start = (const uint8_t *)buffer;
 	const uint8_t *end = start + length - 1;
-	s_check_access(start);
-	if (length > 0)
-		s_check_access(end);
 
-	for (const uint8_t *p = pg_round_down(start) + PGSIZE; p <= pg_round_down(end); p += PGSIZE)
+	for (const uint8_t *p = pg_round_down(start); p <= pg_round_down(end); p += PGSIZE)
 	{
 		s_check_access(p);
+#ifdef VM
+		struct page *page = spt_find_page(&thread_current()->spt, p);
+		if (page && page->writable == 0)
+		{
+			s_exit(-1);
+		}
+#endif
 	}
 }
 
