@@ -17,4 +17,16 @@ struct aux
     struct intr_frame *if_;
     struct thread *thread;
 };
+
+struct new_aux
+{
+    struct file *file;
+    off_t offset;
+    size_t page_read_bytes;
+};
+#ifdef VM
+#define MAP_FAILED ((void *)NULL)
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap(void *addr);
+#endif
 #endif /* userprog/process.h */

@@ -10,6 +10,8 @@
 #include "devices/timer.h"
 #include <string.h>
 #include "userprog/syscall.h"
+#include "userprog/process.h"
+#include "filesys/file.h"
 static struct list frame_table;
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -218,8 +220,7 @@ vm_handle_wp(struct page *page UNUSED)
 }
 
 /* Return true on success */
-bool vm_try_handle_fault(struct intr_frame *f UNUSED, void *addr UNUSED,
-						 bool user UNUSED, bool write, bool not_present UNUSED)
+bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write, bool not_present)
 {
 	struct supplemental_page_table *spt = &thread_current()->spt;
 	/* TODO: Validate the fault */
@@ -304,19 +305,39 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct su
 	{
 		struct page *src_page = hash_entry(hash_cur(&temp), struct page, hash_elem);
 		enum vm_type type = VM_TYPE(src_page->operations->type);
-		// UNINIT 페이지는 먼저 부모에서 claim해서 실제 타입으로 변환
+
 		if (type == VM_UNINIT)
 		{
-			// 부모 페이지를 먼저 로드
-			if (!vm_do_claim_page(src_page))
+			// UNINIT 페이지는 자식에게도 UNINIT으로 복사
+			// aux 데이터 복사 (file_reopen 필요)
+			struct new_aux *src_aux = (struct new_aux *)src_page->uninit.aux;
+			struct new_aux *new_aux = (struct new_aux *)malloc(sizeof(struct new_aux));
+			if (new_aux == NULL)
 			{
 				return false;
 			}
-			type = VM_TYPE(src_page->operations->type);
-		}
+			struct file *reopened_file = file_reopen(src_aux->file);
+			if (reopened_file == NULL)
+			{
+				free(new_aux);
+				return false;
+			}
+			new_aux->file = reopened_file;
+			new_aux->offset = src_aux->offset;
+			new_aux->page_read_bytes = src_aux->page_read_bytes;
 
-		if (type == VM_ANON || type == VM_FILE)
+			// UNINIT 페이지 생성
+			if (!vm_alloc_page_with_initializer(src_page->uninit.type, src_page->va,
+												src_page->writable, src_page->uninit.init, new_aux))
+			{
+				file_close(reopened_file);
+				free(new_aux);
+				return false;
+			}
+		}
+		else if (type == VM_ANON || type == VM_FILE)
 		{
+			// 이미 claim된 페이지는 물리 메모리를 복사
 			if (!vm_alloc_page(type, src_page->va, src_page->writable))
 			{
 				return false;

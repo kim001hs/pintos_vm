@@ -127,11 +127,13 @@ void syscall_handler(struct intr_frame *f)
 	case SYS_CLOSE:
 		s_close(f->R.rdi);
 		break;
-		/* Project 3 and optionally project 4. */
-		// case SYS_MMAP:
-		// 	break;
-		// case SYS_MUNMAP:
-		// 	break;
+	/* Project 3 and optionally project 4. */
+	case SYS_MMAP:
+		f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap(f->R.rdi);
+		break;
 		// /* Project 4 only. */
 		// case SYS_CHDIR:
 		// 	break;
