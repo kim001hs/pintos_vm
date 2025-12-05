@@ -76,6 +76,7 @@ void syscall_init(void)
 /* The main system call interface */
 void syscall_handler(struct intr_frame *f UNUSED)
 {
+	thread_current()->tf.rsp = f->rsp;
 	// TODO: Your implementation goes here.
 	// %rdi, %rsi, %rdx, %r10, %r8, %r9: 시스템 콜 인자
 	switch (f->R.rax)
@@ -428,7 +429,7 @@ static int s_dup2(int oldfd, int newfd)
 
 static void s_check_access(const char *file)
 {
-	if (file == NULL || !is_user_vaddr(file) || pml4_get_page(thread_current()->pml4, file) == NULL)
+	if (file == NULL || !is_user_vaddr(file))
 	{
 		s_exit(-1);
 	}
