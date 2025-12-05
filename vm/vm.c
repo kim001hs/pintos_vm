@@ -4,6 +4,7 @@
 #include "vm/vm.h"
 #include "vm/inspect.h"
 #include "include/lib/kernel/hash.h"
+#include "threads/vaddr.h"
 
 /* Initializes the virtual memory subsystem by invoking each subsystem's
  * intialize codes. */
@@ -40,24 +41,24 @@ static struct frame *vm_get_victim(void);
 static bool vm_do_claim_page(struct page *page);
 static struct frame *vm_evict_frame(void);
 
-/* Create the pending page object with initializer. If you want to create a
- * page, do not create it directly and make it through this function or
- * `vm_alloc_page`. */
+/* 초기화 함수를 갖는 미완성(pending) 페이지 객체를 생성하라.
+만약 페이지를 만들고 싶다면, 직접 만들지 말고
+반드시 이 함수 또는 vm_alloc_page 를 통해 만들어라. */
 bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writable,
-									vm_initializer *init, void *aux)
-{
-
+									vm_initializer *init, void *aux) //anon_page:init,aux 없음
+{ //기능: initializer 이용해 페이지를 할당한다.
 	ASSERT(VM_TYPE(type) != VM_UNINIT)
 
 	struct supplemental_page_table *spt = &thread_current()->spt;
 
 	/* Check wheter the upage is already occupied or not. */
-	if (spt_find_page(spt, upage) == NULL)
+	if (spt_find_page(spt, upage) == NULL) //spt에 해당 페이지의 va 없으면,(=)
 	{
-		/* TODO: Create the page, fetch the initialier according to the VM type,
-		 * TODO: and then create "uninit" page struct by calling uninit_new. You
-		 * TODO: should modify the field after calling the uninit_new. */
-		
+		/* TODO: 페이지를 생성하고, VM 타입에 따라 적절한 initializer를 가져와라.
+		그 다음 uninit_new 를 호출해서 "uninit" 페이지 구조체를 만들어라.
+		uninit_new 를 호출한 뒤에, 그 구조체의 필드들을 수정해야 한다. */
+		//void *va = upage.
+		//vm_claim_page();
 		/* TODO: Insert the page into the spt. */
 	}
 err:
@@ -146,8 +147,8 @@ vm_get_frame(void)
 
 	// 2: 프레임도 할당받고 멤버들 초기화
 	frame = malloc(sizeof(struct frame));
-	frame->page = p;
-	//frame->kva = ??;
+	frame->page = NULL; //아직 넣지 않음
+	frame->kva = p;
 
 	// 3: 프레임 반환
 	ASSERT(frame != NULL);
@@ -196,29 +197,40 @@ void vm_dealloc_page(struct page *page)
 
 /* Claim the page that allocate on VA. */
 bool vm_claim_page(void *va UNUSED)
-{
+{ //기능: page 클레임(획득) -> VA에 할당하기(vm_do_claim_page())
 	struct page *page = NULL;
 	/* TODO: Fill this function */
+	// 0: va - 페이지단위 정렬
+	va = pg_round_down(va);
 
+	// 1: va 기반 spt로 페이지 찾기 (spt_find_page())
+	page = spt_find_page(&thread_current()->spt, va);
+	if (page == NULL){
+		return false;
+	}
+	// 2: 물리 페이지+프레임 할당받아 mmap (pte 추가) = vm_do_claim_page()
 	return vm_do_claim_page(page);
 }
 
 /* Claim the PAGE and set up the mmu. */
 static bool
 vm_do_claim_page(struct page *page)
-{	//기능: 페이지->프레임 할당받아(=vm_get_frame()) mmap에 등록(=pte추가) => 성공여부 반환
+{	//기능: 페이지->프레임 할당받아(=vm_get_frame()) mmap(=pte추가) => 성공여부 반환
 	// 1: 프레임 할당받기(페이지 포함) ========
 	struct frame *frame = vm_get_frame();
 
 	/* Set links */
+	// 2: 프레임 - 페이지 연결 ========
 	frame->page = page;
 	page->frame = frame;
 
 	/* TODO: Insert page table entry to map page's VA to frame's PA. */
 
-	// 2: PTE 등록 (va-pa) =mmap)  ========
-	pml4_set_page(&thread_current()->pml4, page, frame->page);
-
+	// 3: PTE 등록 (va-pa) =mmap)  ========
+	if (!pml4_set_page(thread_current()->pml4, page->va, frame->kva, page->writable)){
+		return false;
+	}
+	// 4: 디스크/파일에서 실제 데이터 로드 (claim의 의미에 포함됨) ========
 	return swap_in(page, frame->kva);
 }
 /* ======== 해시 헬퍼 함수 ======== */
