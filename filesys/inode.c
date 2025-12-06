@@ -6,6 +6,7 @@
 #include "filesys/filesys.h"
 #include "filesys/free-map.h"
 #include "threads/malloc.h"
+#include "threads/synch.h"
 
 /* Identifies an inode. */
 #define INODE_MAGIC 0x494e4f44
@@ -56,11 +57,13 @@ byte_to_sector(const struct inode *inode, off_t pos)
 /* List of open inodes, so that opening a single inode twice
  * returns the same `struct inode'. */
 static struct list open_inodes;
+static struct lock inode_lock;
 
 /* Initializes the inode module. */
 void inode_init(void)
 {
 	list_init(&open_inodes);
+	lock_init(&inode_lock);
 }
 
 /* Initializes an inode with LENGTH bytes of data and
@@ -111,6 +114,7 @@ inode_open(disk_sector_t sector)
 {
 	struct list_elem *e;
 	struct inode *inode;
+	lock_acquire(&inode_lock);
 
 	/* Check whether this inode is already open. */
 	for (e = list_begin(&open_inodes); e != list_end(&open_inodes);
@@ -120,6 +124,7 @@ inode_open(disk_sector_t sector)
 		if (inode->sector == sector)
 		{
 			inode_reopen(inode);
+			lock_release(&inode_lock);
 			return inode;
 		}
 	}
@@ -127,7 +132,10 @@ inode_open(disk_sector_t sector)
 	/* Allocate memory. */
 	inode = malloc(sizeof *inode);
 	if (inode == NULL)
+	{
+		lock_release(&inode_lock);
 		return NULL;
+	}
 
 	/* Initialize. */
 	list_push_front(&open_inodes, &inode->elem);
@@ -136,6 +144,8 @@ inode_open(disk_sector_t sector)
 	inode->deny_write_cnt = 0;
 	inode->removed = false;
 	disk_read(filesys_disk, inode->sector, &inode->data);
+
+	lock_release(&inode_lock);
 	return inode;
 }
 
@@ -164,11 +174,15 @@ void inode_close(struct inode *inode)
 	if (inode == NULL)
 		return;
 
+	lock_acquire(&inode_lock);
+
 	/* Release resources if this was the last opener. */
 	if (--inode->open_cnt == 0)
 	{
 		/* Remove from inode list and release lock. */
 		list_remove(&inode->elem);
+
+		lock_release(&inode_lock);
 
 		/* Deallocate blocks if removed. */
 		if (inode->removed)
@@ -180,10 +194,12 @@ void inode_close(struct inode *inode)
 
 		free(inode);
 	}
-}
-
-/* Marks INODE to be deleted when it is closed by the last caller who
- * has it open. */
+	else
+	{
+		lock_release(&inode_lock);
+	}
+} /* Marks INODE to be deleted when it is closed by the last caller who
+   * has it open. */
 void inode_remove(struct inode *inode)
 {
 	ASSERT(inode != NULL);

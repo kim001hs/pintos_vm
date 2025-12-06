@@ -14,6 +14,7 @@
 #include <string.h>
 #include "threads/palloc.h"
 #include "threads/malloc.h"
+#include "vm/vm.h"
 
 void syscall_entry(void);
 void syscall_handler(struct intr_frame *);
@@ -24,7 +25,7 @@ void syscall_handler(struct intr_frame *);
    Pintos에는 파일별 락이 없기 때문에,
    서로 다른 파일을 접근하는 경우라도
    현재 파일 시스템 콜이 끝날 때까지 대기해야 한다. */
-static struct lock filesys_lock;
+struct lock filesys_lock;
 
 static void s_halt(void) NO_RETURN;
 void s_exit(int status) NO_RETURN;
@@ -74,8 +75,11 @@ void syscall_init(void)
 }
 
 /* The main system call interface */
-void syscall_handler(struct intr_frame *f UNUSED)
+void syscall_handler(struct intr_frame *f)
 {
+#ifdef VM
+	thread_current()->rsp = f->rsp;
+#endif
 	// TODO: Your implementation goes here.
 	// %rdi, %rsi, %rdx, %r10, %r8, %r9: 시스템 콜 인자
 	switch (f->R.rax)
@@ -123,11 +127,13 @@ void syscall_handler(struct intr_frame *f UNUSED)
 	case SYS_CLOSE:
 		s_close(f->R.rdi);
 		break;
-		/* Project 3 and optionally project 4. */
-		// case SYS_MMAP:
-		// 	break;
-		// case SYS_MUNMAP:
-		// 	break;
+	/* Project 3 and optionally project 4. */
+	case SYS_MMAP:
+		f->R.rax = mmap(f->R.rdi, f->R.rsi, f->R.rdx, f->R.r10, f->R.r8);
+		break;
+	case SYS_MUNMAP:
+		munmap(f->R.rdi);
+		break;
 		// /* Project 4 only. */
 		// case SYS_CHDIR:
 		// 	break;
@@ -428,10 +434,17 @@ static int s_dup2(int oldfd, int newfd)
 
 static void s_check_access(const char *file)
 {
-	if (file == NULL || !is_user_vaddr(file) || pml4_get_page(thread_current()->pml4, file) == NULL)
-	{
+	if (file == NULL || !is_user_vaddr(file))
 		s_exit(-1);
-	}
+#ifdef VM
+	if ((USER_STACK - (1 << 20)) < file && file < USER_STACK)
+		return;
+	else if (!spt_find_page(&thread_current()->spt, file))
+		s_exit(-1);
+#else
+	if (!pml4_get_page(thread_current()->pml4, file))
+		s_exit(-1);
+#endif
 }
 
 static void s_check_buffer(const void *buffer, unsigned length)
@@ -440,13 +453,17 @@ static void s_check_buffer(const void *buffer, unsigned length)
 		s_exit(-1);
 	const uint8_t *start = (const uint8_t *)buffer;
 	const uint8_t *end = start + length - 1;
-	s_check_access(start);
-	if (length > 0)
-		s_check_access(end);
 
-	for (const uint8_t *p = pg_round_down(start) + PGSIZE; p <= pg_round_down(end); p += PGSIZE)
+	for (const uint8_t *p = pg_round_down(start); p <= pg_round_down(end); p += PGSIZE)
 	{
 		s_check_access(p);
+#ifdef VM
+		struct page *page = spt_find_page(&thread_current()->spt, p);
+		if (page && page->writable == 0)
+		{
+			s_exit(-1);
+		}
+#endif
 	}
 }
 

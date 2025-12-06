@@ -22,6 +22,7 @@
 #include "devices/timer.h"
 #include "lib/stdio.h"
 #include "threads/malloc.h"
+#include "userprog/syscall.h"
 
 #ifdef VM
 #include "vm/vm.h"
@@ -269,7 +270,9 @@ int process_exec(void *f_name)
 
 	/* We first kill the current context */
 	process_cleanup();
-
+#ifdef VM
+	supplemental_page_table_init(&thread_current()->spt);
+#endif
 	/* And then load the binary */
 	success = load(file_name, &_if);
 
@@ -772,11 +775,52 @@ install_page(void *upage, void *kpage, bool writable)
  * upper block. */
 
 static bool
-lazy_load_segment(struct page *page, void *aux)
+lazy_load_segment(struct page *page, struct new_aux *aux)
 {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+	bool lock_acquired = false;
+	if (!lock_held_by_current_thread(&filesys_lock))
+	{
+		lock_acquire(&filesys_lock);
+		lock_acquired = true;
+	}
+	size_t page_read_bytes = aux->page_read_bytes;
+	size_t page_zero_bytes = PGSIZE - page_read_bytes;
+	struct file *file = aux->file;
+	off_t offset = aux->offset;
+	free(aux);
+	file_seek(file, offset);
+	/* Get a page of memory. */
+	uint8_t *kpage = page->frame->kva;
+	if (kpage == NULL)
+	{
+		if (lock_acquired)
+		{
+			lock_release(&filesys_lock);
+		}
+		file_close(file);
+		return false;
+	}
+
+	/* Load this page. */
+	if (file_read(file, kpage, page_read_bytes) != (int)page_read_bytes)
+	{
+		if (lock_acquired)
+		{
+			lock_release(&filesys_lock);
+		}
+		file_close(file);
+		return false;
+	}
+	memset(kpage + page_read_bytes, 0, page_zero_bytes);
+	if (lock_acquired)
+	{
+		lock_release(&filesys_lock);
+	}
+	file_close(file);
+	return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -810,15 +854,32 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
-		if (!vm_alloc_page_with_initializer(VM_ANON, upage,
-											writable, lazy_load_segment, aux))
+		struct new_aux *aux = (struct new_aux *)malloc(sizeof(struct new_aux));
+		if (aux == NULL)
+		{
 			return false;
+		}
+		struct file *reopened_file = file_reopen(file);
+		if (reopened_file == NULL)
+		{
+			free(aux); // 이전에 malloc된 aux가 있다면 해제
+			return false;
+		}
+		aux->file = reopened_file;
+		aux->offset = ofs;
+		aux->page_read_bytes = page_read_bytes;
+		if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, aux))
+		{
+			free(aux);
+			file_close(reopened_file);
+			return false;
+		}
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes; // seek를 매번 해야하니까 오프셋도 변경해야함
 	}
 	return true;
 }
@@ -834,8 +895,115 @@ setup_stack(struct intr_frame *if_)
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
-
+	if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true))
+	{
+		success = vm_claim_page(stack_bottom);
+		if (success)
+		{
+			if_->rsp = USER_STACK;
+		}
+	}
 	return success;
 }
 
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
+{
+	if (!addr || !is_user_vaddr(addr) || !is_user_vaddr(pg_round_up(addr + length)) || addr != pg_round_down(addr) ||
+		spt_find_page(&thread_current()->spt, addr) || !length)
+	{
+		return MAP_FAILED;
+	}
+	struct file *file = thread_current()->fd_table[fd];
+	if (file == STDIN || file == STDOUT)
+		return MAP_FAILED;
+	uint8_t *upage = (uint8_t *)addr;
+	// vm_alloc_page_with_initializer();
+	while (length > 0)
+	{
+		/* Do calculate how to fill this page.
+		 * We will read PAGE_READ_BYTES bytes from FILE
+		 * and zero the final PAGE_ZERO_BYTES bytes. */
+		size_t page_read_bytes = length < PGSIZE ? length : PGSIZE;
+		size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
+		/* TODO: Set up aux to pass information to the lazy_load_segment. */
+		struct new_aux *aux = (struct new_aux *)malloc(sizeof(struct new_aux));
+		if (aux == NULL)
+		{
+			return MAP_FAILED;
+		}
+		struct file *reopened_file = file_reopen(file);
+		if (reopened_file == NULL)
+		{
+			free(aux); // 이전에 malloc된 aux가 있다면 해제
+			return MAP_FAILED;
+		}
+		aux->file = reopened_file;
+		aux->offset = offset;
+		aux->page_read_bytes = page_read_bytes;
+		if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, aux))
+		{
+			// 앞에 할당한 페이지들 삭제 dealloc
+			free(aux);
+			file_close(reopened_file);
+			return MAP_FAILED;
+		}
+
+		/* Advance. */
+		length -= page_read_bytes;
+		upage += PGSIZE;
+		offset += page_read_bytes; // seek를 매번 해야하니까 오프셋도 변경해야함
+	}
+	return addr;
+}
+/*
+### 역할:
+- 파일 디스크립터 `fd`로 열린 파일의 **offset 바이트부터 length 바이트만큼**
+- 프로세스의 **가상 주소 공간의 addr부터** 매핑
+- 매핑은 페이지 단위로 이루어짐
+
+### 처리 방법:
+- 파일의 길이가 PGSIZE(4096바이트)의 배수가 아니라면,마지막 페이지는 일부만 유효하고, **나머지 바이트는 0으로 초기화**
+- 언매핑 시, **0으로 채워진 부분은 파일에 반영하지 않아야 함**
+- 매핑이 성공하면 **매핑된 가상 주소(addr)를 반환**, 실패 시 **NULL 반환**
+
+
+### 실패 조건:
+- `fd`로 열린 파일의 **길이가 0바이트**면 실패
+- `addr`이 페이지 정렬되지 않았으면 실패
+	- 4KB align 말하는듯
+- 매핑하려는 페이지 영역이 이미 다른 영역(스택, 실행 파일 등)과 **겹치면 실패**
+	- 이걸 어떻게 확인하지?? SPT??
+
+> ✔️ Lazy loading으로 메모리 매핑된 페이지를 할당해야 합니다.
+>
+> `vm_alloc_page_with_initializer()` 또는 `vm_alloc_page()`를 사용할 수 있습니다.
+*/
+
+void munmap(void *addr)
+{
+}
+/*
+- `addr` 주소부터 시작된 매핑을 해제합니다.
+- 이 주소는 이전에 **`mmap()`으로 매핑된 주소여야 하며**,
+	**아직 해제되지 않은 주소여야 함**
+---
+
+### 특징 및 처리:
+
+- 프로세스가 종료되면, 명시적 `munmap()` 없이도 **모든 매핑은 자동 해제**
+- 매핑 해제 시,
+	- **수정된 페이지는 파일에 반영**
+		- dirty bit 확인하고 write-back
+	- **수정되지 않은 페이지는 반영하지 않음**
+- 페이지는 보조 페이지 테이블(SPT)에서 제거
+
+> ⚠️ close()나 remove()로 파일을 닫더라도 해당 매핑은 해제되지 않습니다.
+>
+>
+> (Unix 시스템과 동일한 동작)
+>
+> → 매핑은 명시적 `munmap()`이나 프로세스 종료 시까지 유효
+>
+*/
 #endif /* VM */
