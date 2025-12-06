@@ -10,7 +10,7 @@ static void
 inspect(struct intr_frame *f)
 {
 	const void *va = (const void *)f->R.rax;
-	f->R.rax = PTE_ADDR(pml4_get_page(thread_current()->pml4, va));
+	f->R.rax = PTE_ADDR(pml4_get_page(thread_current()->pml4, va)); //Returns the address of the page table entry for VA in pml4.
 }
 
 /* Tool for testing vm component. Calling this function via int 0x42.

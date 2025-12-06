@@ -49,7 +49,7 @@ uninit_initialize(struct page *page, void *kva)
 
 	/* Fetch first, page_initialize may overwrite the values */
 	vm_initializer *init = uninit->init;
-	void *aux = uninit->aux;
+	void *aux = uninit->aux; //[?]얘는 뭐지? 그냥 인자인가?
 
 	/* TODO: You may need to fix this function. */
 	return uninit->page_initializer(page, uninit->type, kva) &&

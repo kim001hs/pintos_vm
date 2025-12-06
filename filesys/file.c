@@ -138,8 +138,8 @@ off_t file_write_at(struct file *file, const void *buffer, off_t size,
 	return inode_write_at(file->inode, buffer, size, file_ofs);
 }
 
-/* Prevents write operations on FILE's underlying inode
- * until file_allow_write() is called or FILE is closed. */
+/* file_allow_write()가 호출되거나 FILE이 닫히기 전까지,
+FILE이 기반하고 있는 inode에 대한 쓰기 작업을 막는다. */
 void file_deny_write(struct file *file)
 {
 	ASSERT(file != NULL);

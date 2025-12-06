@@ -19,8 +19,8 @@ static void insert_elem(struct hash *, struct list *, struct hash_elem *);
 static void remove_elem(struct hash *, struct hash_elem *);
 static void rehash(struct hash *);
 
-/* Initializes hash table H to compute hash values using HASH and
-   compare hash elements using LESS, given auxiliary data AUX. */
+/* 해시 테이블 H를 초기화하는데, HASH를 사용해 해시 값을 계산하고 LESS를 사용해 해시 요소들을 비교하며, 
+보조 데이터 AUX가 주어집니다.*/
 bool hash_init(struct hash *h,
 			   hash_hash_func *hash, hash_less_func *less, void *aux)
 {
@@ -40,15 +40,13 @@ bool hash_init(struct hash *h,
 		return false;
 }
 
-/* Removes all the elements from H.
-
-   If DESTRUCTOR is non-null, then it is called for each element
-   in the hash.  DESTRUCTOR may, if appropriate, deallocate the
-   memory used by the hash element.  However, modifying hash
-   table H while hash_clear() is running, using any of the
-   functions hash_clear(), hash_destroy(), hash_insert(),
-   hash_replace(), or hash_delete(), yields undefined behavior,
-   whether done in DESTRUCTOR or elsewhere. */
+/* “H에서 모든 요소들을 제거한다.
+만약 DESTRUCTOR가 null이 아니라면, 해시 안의 각 요소마다 그것이 호출된다.
+DESTRUCTOR는, 적절하다면, 그 해시 요소가 사용한 메모리를 해제(deallocate)할 수 있다.
+그러나 hash_clear()가 실행되는 동안,
+hash_clear(), hash_destroy(), hash_insert(), hash_replace(), hash_delete() 같은 함수들을 사용하여
+해시 테이블 H를 수정하는 것은
+DESTRUCTOR 안에서 이루어지든, 다른 곳에서 이루어지든, undefined behavior(정의되지 않은 동작)를 일으킨다. */
 void hash_clear(struct hash *h, hash_action_func *destructor)
 {
 	size_t i;
@@ -71,16 +69,13 @@ void hash_clear(struct hash *h, hash_action_func *destructor)
 	h->elem_cnt = 0;
 }
 
-/* Destroys hash table H.
-
-   If DESTRUCTOR is non-null, then it is first called for each
-   element in the hash.  DESTRUCTOR may, if appropriate,
-   deallocate the memory used by the hash element.  However,
-   modifying hash table H while hash_clear() is running, using
-   any of the functions hash_clear(), hash_destroy(),
-   hash_insert(), hash_replace(), or hash_delete(), yields
-   undefined behavior, whether done in DESTRUCTOR or
-   elsewhere. */
+/* “해시 테이블 H를 파괴(destroy)한다.
+만약 DESTRUCTOR가 null이 아니라면, 먼저 해시 안의 각 요소에 대해 호출된다.
+DESTRUCTOR는, 적절하다면, 그 해시 요소가 사용한 메모리를 해제(deallocate)할 수 있다.
+하지만 hash_clear()가 실행되는 동안,
+hash_clear(), hash_destroy(), hash_insert(), hash_replace(), hash_delete() 같은 함수로
+해시 테이블 H를 수정하는 것은,
+DESTRUCTOR 안에서든 그 외의 곳에서든, undefined behavior(동작이 정의되지 않음)을 초래한다.” */
 void hash_destroy(struct hash *h, hash_action_func *destructor)
 {
 	if (destructor != NULL)
@@ -88,10 +83,10 @@ void hash_destroy(struct hash *h, hash_action_func *destructor)
 	free(h->buckets);
 }
 
-/* Inserts NEW into hash table H and returns a null pointer, if
-   no equal element is already in the table.
-   If an equal element is already in the table, returns it
-   without inserting NEW. */
+/* NEW를 해시 테이블 H에 삽입하고,
+그와 동일한 요소가 테이블 안에 이미 없다면 null 포인터를 반환한다.
+만약 동일한 요소가 이미 테이블 안에 있다면, NEW를 삽입하지 않고
+그 동일한 요소를 반환한다. */
 struct hash_elem *
 hash_insert(struct hash *h, struct hash_elem *new)
 {
@@ -106,8 +101,9 @@ hash_insert(struct hash *h, struct hash_elem *new)
 	return old;
 }
 
-/* Inserts NEW into hash table H, replacing any equal element
-   already in the table, which is returned. */
+/* NEW를 해시 테이블 H에 삽입하며,
+이미 테이블 안에 동일한 요소가 있다면 그것을 대체하고,
+그 동일한 요소를 반환한다. */
 struct hash_elem *
 hash_replace(struct hash *h, struct hash_elem *new)
 {
@@ -123,21 +119,20 @@ hash_replace(struct hash *h, struct hash_elem *new)
 	return old;
 }
 
-/* Finds and returns an element equal to E in hash table H, or a
-   null pointer if no equal element exists in the table. */
+/* 해시 테이블 H에서 E와 동일한 요소를 찾아서 반환하며,
+동일한 요소가 테이블에 존재하지 않으면 null 포인터를 반환한다. */
 struct hash_elem *
 hash_find(struct hash *h, struct hash_elem *e)
 {
 	return find_elem(h, find_bucket(h, e), e);
 }
 
-/* Finds, removes, and returns an element equal to E in hash
-   table H.  Returns a null pointer if no equal element existed
-   in the table.
+/* 해시 테이블 H에서 E와 동일한 요소를 찾아 제거하고 반환한다.
+테이블에 동일한 요소가 존재하지 않았다면 null 포인터를 반환한다.
 
-   If the elements of the hash table are dynamically allocated,
-   or own resources that are, then it is the caller's
-   responsibility to deallocate them. */
+해시 테이블의 요소들이 동적으로 할당되어 있거나,
+동적으로 할당된 자원을 소유하고 있다면,
+그것들을 해제하는 책임은 호출자에게 있다. */
 struct hash_elem *
 hash_delete(struct hash *h, struct hash_elem *e)
 {
@@ -150,12 +145,12 @@ hash_delete(struct hash *h, struct hash_elem *e)
 	return found;
 }
 
-/* Calls ACTION for each element in hash table H in arbitrary
-   order.
-   Modifying hash table H while hash_apply() is running, using
-   any of the functions hash_clear(), hash_destroy(),
-   hash_insert(), hash_replace(), or hash_delete(), yields
-   undefined behavior, whether done from ACTION or elsewhere. */
+/* 해시 테이블 H 안의 각 요소에 대해, 임의의 순서로 ACTION을 호출한다.
+hash_apply()가 실행 중일 때,
+hash_clear(), hash_destroy(), hash_insert(), hash_replace(), hash_delete() 같은 함수들을 사용해
+해시 테이블 H를 수정하는 것은,
+그것이 ACTION 안에서 수행되든 다른 곳에서 수행되든,
+undefined behavior(정의되지 않은 동작)를 일으킨다. */
 void hash_apply(struct hash *h, hash_action_func *action)
 {
 	size_t i;
@@ -175,23 +170,22 @@ void hash_apply(struct hash *h, hash_action_func *action)
 	}
 }
 
-/* Initializes I for iterating hash table H.
+/* 해시 테이블 H를 순회(iterate)하기 위해 I를 초기화한다.
 
-   Iteration idiom:
+   	순회 예시:
 
-   struct hash_iterator i;
+   	struct hash_iterator i;
 
-   hash_first (&i, h);
-   while (hash_next (&i))
-   {
-   struct foo *f = hash_entry (hash_cur (&i), struct foo, elem);
-   ...do something with f...
-   }
+	hash_first (&i, h);
+	while (hash_next (&i))
+	{
+  		struct foo *f = hash_entry (hash_cur (&i), struct foo, elem);
+  		...f로 무언가를 수행...
+	}
 
-   Modifying hash table H during iteration, using any of the
-   functions hash_clear(), hash_destroy(), hash_insert(),
-   hash_replace(), or hash_delete(), invalidates all
-   iterators. */
+   	해시 테이블 H를 순회하는 동안,
+	hash_clear(), hash_destroy(), hash_insert(), hash_replace(), hash_delete()와 같은 함수들을 사용해
+	해시 테이블 H를 수정하면, 모든 이터레이터가 무효화된다. */
 void hash_first(struct hash_iterator *i, struct hash *h)
 {
 	ASSERT(i != NULL);
@@ -202,14 +196,12 @@ void hash_first(struct hash_iterator *i, struct hash *h)
 	i->elem = list_elem_to_hash_elem(list_head(i->bucket));
 }
 
-/* Advances I to the next element in the hash table and returns
-   it.  Returns a null pointer if no elements are left.  Elements
-   are returned in arbitrary order.
+/* 현재 iterator가 가리키는 위치에서 “다음 요소”를 찾아서 iterator를 그쪽으로 이동시키고, 
+그 요소의 포인터를 반환하는 함수.
 
-   Modifying a hash table H during iteration, using any of the
-   functions hash_clear(), hash_destroy(), hash_insert(),
-   hash_replace(), or hash_delete(), invalidates all
-   iterators. */
+순회(iteration) 중에 hash_clear(), hash_destroy(), hash_insert(),
+hash_replace(), hash_delete() 같은 함수로
+해시 테이블 H를 수정하면 모든 이터레이터가 무효화된다. */
 struct hash_elem *
 hash_next(struct hash_iterator *i)
 {
@@ -229,9 +221,10 @@ hash_next(struct hash_iterator *i)
 	return i->elem;
 }
 
-/* Returns the current element in the hash table iteration, or a
-   null pointer at the end of the table.  Undefined behavior
-   after calling hash_first() but before hash_next(). */
+/* 해시 테이블 순회(iteration)에서 현재 요소를 반환하며,
+테이블의 끝이라면 null 포인터를 반환한다.
+hash_first()를 호출한 뒤 hash_next()를 호출하기 전까지는
+이 함수를 호출하면 undefined behavior(정의되지 않은 동작)이다. */
 struct hash_elem *
 hash_cur(struct hash_iterator *i)
 {
@@ -303,8 +296,9 @@ find_bucket(struct hash *h, struct hash_elem *e)
 	return &h->buckets[bucket_idx];
 }
 
-/* Searches BUCKET in H for a hash element equal to E.  Returns
-   it if found or a null pointer otherwise. */
+/* H 안의 BUCKET에서 E와 동일한 해시 요소를 탐색한다.
+찾으면 그 요소를 반환하고,
+그렇지 않으면 null 포인터를 반환한다. */
 static struct hash_elem *
 find_elem(struct hash *h, struct list *bucket, struct hash_elem *e)
 {
@@ -338,10 +332,10 @@ is_power_of_2(size_t x)
 #define BEST_ELEMS_PER_BUCKET 2 /* Ideal elems/bucket. */
 #define MAX_ELEMS_PER_BUCKET 4	/* Elems/bucket > 4: increase # of buckets. */
 
-/* Changes the number of buckets in hash table H to match the
-   ideal.  This function can fail because of an out-of-memory
-   condition, but that'll just make hash accesses less efficient;
-   we can still continue. */
+/* 해시 테이블 H의 버킷 수를 이상적인 값에 맞도록 변경한다.
+이 함수는 메모리 부족(out-of-memory) 상태 때문에 실패할 수 있지만,
+그럴 경우 해시 접근이 단지 덜 효율적일 뿐이며,
+계속해서 동작을 이어갈 수는 있다. */
 static void
 rehash(struct hash *h)
 {

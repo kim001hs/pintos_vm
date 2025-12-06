@@ -117,7 +117,7 @@ struct thread *get_thread_by_tid(tid_t child_tid)
 	}
 	return NULL;
 }
-
+/* VM에서 사라지는 기능들 ==================================== */
 #ifndef VM
 /* Duplicate the parent's address space by passing this function to the
  * pml4_for_each. This is only for the project 2. */
@@ -160,7 +160,7 @@ duplicate_pte(uint64_t *pte, void *va, void *aux)
 	return true;
 }
 #endif
-
+/* ========================================== */
 /* A thread function that copies parent's execution context.
  * Hint) parent->tf does not hold the userland context of the process.
  *       That is, you are required to pass second argument of process_fork to
@@ -604,7 +604,7 @@ done:
 	/* We arrive here whether the load is successful or not. */
 	if (success)
 	{
-		file_deny_write(file);
+		file_deny_write(file); //일단 write 막아두기 (허용할때까지)
 		thread_current()->running_file = file;
 	}
 	else
@@ -660,7 +660,7 @@ validate_segment(const struct Phdr *phdr, struct file *file)
 	/* It's okay. */
 	return true;
 }
-
+// VM mode ===============================================
 #ifndef VM
 /* Codes of this block will be ONLY USED DURING project 2.
  * If you want to implement the function for whole project 2, implement it
@@ -669,20 +669,22 @@ validate_segment(const struct Phdr *phdr, struct file *file)
 /* load() helpers. */
 static bool install_page(void *upage, void *kpage, bool writable);
 
-/* Loads a segment starting at offset OFS in FILE at address
- * UPAGE.  In total, READ_BYTES + ZERO_BYTES bytes of virtual
- * memory are initialized, as follows:
- *
- * - READ_BYTES bytes at UPAGE must be read from FILE
- * starting at offset OFS.
- *
- * - ZERO_BYTES bytes at UPAGE + READ_BYTES must be zeroed.
- *
- * The pages initialized by this function must be writable by the
- * user process if WRITABLE is true, read-only otherwise.
- *
- * Return true if successful, false if a memory allocation error
- * or disk read error occurs. */
+/* 파일 FILE 의 OFS(offset) 부터 시작하는 세그먼트를 가상주소 UPAGE 에 로드한다.
+총 READ_BYTES + ZERO_BYTES 바이트의 가상 메모리가
+다음과 같이 초기화된다:
+
+READ_BYTES 바이트 - FILE의 OFS(offset) 위치부터 읽어서
+UPAGE 에 채워 넣어야 한다.
+
+ZERO_BYTES 바이트 - UPAGE + READ_BYTES 위치부터
+0으로 채워(zerod) 넣어야 한다.
+
+이 함수로 초기화된 페이지들은
+WRITABLE이 true이면 사용자 프로세스에서 쓰기 가능,
+false이면 읽기 전용(read-only) 이어야 한다.
+
+메모리 할당 오류나 디스크 읽기 오류가 발생하지 않았다면 true 를 반환하고, 
+오류가 발생하면 false 를 반환한다. */
 static bool
 load_segment(struct file *file, off_t ofs, uint8_t *upage,
 			 uint32_t read_bytes, uint32_t zero_bytes, bool writable)
@@ -766,6 +768,7 @@ install_page(void *upage, void *kpage, bool writable)
 	 * address, then map our page there. */
 	return (pml4_get_page(t->pml4, upage) == NULL && pml4_set_page(t->pml4, upage, kpage, writable));
 }
+// -> VM mode ===============================================
 #else
 /* From here, codes will be used after project 3.
  * If you want to implement the function for only project 2, implement it on the

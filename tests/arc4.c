@@ -17,7 +17,7 @@ void arc4_init(struct arc4 *arc4, const void *key_, size_t size)
   uint8_t *s;
   int i, j;
 
-  s = arc4->s;
+  s = arc4->s; //_char* [256]
   arc4->i = arc4->j = 0;
   for (i = 0; i < 256; i++)
     s[i] = i;

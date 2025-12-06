@@ -2,6 +2,7 @@
 #define VM_VM_H
 #include <stdbool.h>
 #include "threads/palloc.h"
+#include "include/lib/kernel/hash.h"
 
 enum vm_type
 {
@@ -36,18 +37,34 @@ struct page_operations;
 struct thread;
 
 #define VM_TYPE(type) ((type) & 7)
-
+/*
+struct ELF64_PHDR
+{
+	uint32_t p_type;
+	uint32_t p_flags;
+	uint64_t p_offset;
+	uint64_t p_vaddr;
+	uint64_t p_paddr;
+	uint64_t p_filesz;
+	uint64_t p_memsz;
+	uint64_t p_align;
+};
+*/
 /* The representation of "page".
  * This is kind of "parent class", which has four "child class"es, which are
  * uninit_page, file_page, anon_page, and page cache (project4).
  * DO NOT REMOVE/MODIFY PREDEFINED MEMBER OF THIS STRUCTURE. */
-struct page
+struct page // -> 4자식페이지들 - uninit , file , anon (, page-cache)
 {
-	const struct page_operations *operations;
+	const struct page_operations *operations;// swap-in / swap-out / destroy
 	void *va;			 /* Address in terms of user space */
-	struct frame *frame; /* Back reference for frame */
+	struct frame *frame; /* Back reference for frame - 없으면 NULL */
 
 	/* Your implementation */
+	int writable; //쓰기 권한
+	off_t offset; //파일 내 시작위치
+
+	struct hash_elem h_elem; //SPT 해시테이블에 넣을 때 쓰는 요소
 
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
@@ -67,6 +84,8 @@ struct frame
 {
 	void *kva;
 	struct page *page;
+	
+	//프레임 관리 인터페이스 구현 시 멤버 더 추가해야함
 };
 
 /* The function table for page operations.
@@ -90,8 +109,9 @@ struct page_operations
 /* Representation of current process's memory space.
  * We don't want to force you to obey any specific design for this struct.
  * All designs up to you for this. */
-struct supplemental_page_table
+struct supplemental_page_table //용도: 각 파일의 페이지폴트시 불러올 때 필요한 데이터 저장용, 해제할 리소스 결정용 
 {
+	struct hash spt_map; //VA - page 매핑
 };
 
 #include "threads/thread.h"
@@ -107,7 +127,7 @@ void spt_remove_page(struct supplemental_page_table *spt, struct page *page);
 void vm_init(void);
 bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user,
 						 bool write, bool not_present);
-
+/* vm_alloc_page(): 초기화함수 필요 없을 때 쓰는 간단 버전(매크로) */
 #define vm_alloc_page(type, upage, writable) \
 	vm_alloc_page_with_initializer((type), (upage), (writable), NULL, NULL)
 bool vm_alloc_page_with_initializer(enum vm_type type, void *upage,
