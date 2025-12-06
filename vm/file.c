@@ -1,6 +1,12 @@
 /* file.c: Implementation of memory backed file object (mmaped object). */
 
 #include "vm/vm.h"
+#include "threads/mmu.h"
+#include "userprog/syscall.h"
+#include "filesys/inode.h"
+#include "filesys/file.h"
+#include <stdlib.h>
+#include <string.h>
 
 static bool file_backed_swap_in(struct page *page, void *kva);
 static bool file_backed_swap_out(struct page *page);
@@ -33,7 +39,22 @@ bool file_backed_initializer(struct page *page, enum vm_type type, void *kva)
 static bool
 file_backed_swap_in(struct page *page, void *kva)
 {
-	struct file_page *file_page UNUSED = &page->file;
+	struct file_page *file_page = &page->file;
+
+	// 파일에서 페이지 데이터 읽기
+	lock_acquire(&filesys_lock);
+	file_seek(file_page->file, file_page->offset);
+	int bytes_read = file_read(file_page->file, kva, file_page->page_read_bytes);
+	lock_release(&filesys_lock);
+
+	if (bytes_read != (int)file_page->page_read_bytes)
+	{
+		return false;
+	}
+
+	// 나머지 부분은 0으로 채움
+	memset(kva + file_page->page_read_bytes, 0, PGSIZE - file_page->page_read_bytes);
+
 	return true;
 }
 
@@ -41,7 +62,21 @@ file_backed_swap_in(struct page *page, void *kva)
 static bool
 file_backed_swap_out(struct page *page)
 {
-	struct file_page *file_page UNUSED = &page->file;
+	struct file_page *file_page = &page->file;
+
+	// Dirty bit 확인
+	if (pml4_is_dirty(thread_current()->pml4, page->va))
+	{
+		// 파일에 write-back
+		lock_acquire(&filesys_lock);
+		file_write_at(file_page->file, page->frame->kva, file_page->page_read_bytes, file_page->offset);
+		pml4_set_dirty(thread_current()->pml4, page->va, 0);
+		lock_release(&filesys_lock);
+	}
+
+	// 페이지 테이블 엔트리 제거
+	pml4_clear_page(thread_current()->pml4, page->va);
+
 	return true;
 }
 
@@ -49,7 +84,29 @@ file_backed_swap_out(struct page *page)
 static void
 file_backed_destroy(struct page *page)
 {
-	struct file_page *file_page UNUSED = &page->file;
+	struct file_page *file_page = &page->file;
+
+	// 페이지가 메모리에 로드되어 있으면 write-back
+	if (page->frame != NULL && page->writable)
+	{
+		// Dirty bit 확인 - 수정된 경우에만 write-back
+		if (pml4_is_dirty(thread_current()->pml4, page->va))
+		{
+			lock_acquire(&filesys_lock);
+			file_write_at(file_page->file, page->frame->kva,
+						  file_page->page_read_bytes, file_page->offset);
+			lock_release(&filesys_lock);
+		}
+	}
+
+	// 파일 핸들 닫기 (메모리에 있든 없든 항상 닫아야 함)
+	if (file_page->file != NULL)
+	{
+		lock_acquire(&filesys_lock);
+		file_close(file_page->file);
+		lock_release(&filesys_lock);
+		file_page->file = NULL;
+	}
 }
 
 /* Do the mmap */

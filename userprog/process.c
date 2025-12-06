@@ -790,12 +790,13 @@ lazy_load_segment(struct page *page, struct new_aux *aux)
 	size_t page_zero_bytes = PGSIZE - page_read_bytes;
 	struct file *file = aux->file;
 	off_t offset = aux->offset;
-	free(aux);
+
 	file_seek(file, offset);
 	/* Get a page of memory. */
 	uint8_t *kpage = page->frame->kva;
 	if (kpage == NULL)
 	{
+		free(aux);
 		if (lock_acquired)
 		{
 			lock_release(&filesys_lock);
@@ -805,8 +806,10 @@ lazy_load_segment(struct page *page, struct new_aux *aux)
 	}
 
 	/* Load this page. */
-	if (file_read(file, kpage, page_read_bytes) != (int)page_read_bytes)
+	int bytes_read = file_read(file, kpage, page_read_bytes);
+	if (bytes_read < 0)
 	{
+		free(aux);
 		if (lock_acquired)
 		{
 			lock_release(&filesys_lock);
@@ -814,12 +817,32 @@ lazy_load_segment(struct page *page, struct new_aux *aux)
 		file_close(file);
 		return false;
 	}
+	// 파일 끝에 도달한 경우, 나머지는 0으로 채움
+	if (bytes_read < (int)page_read_bytes)
+	{
+		memset(kpage + bytes_read, 0, page_read_bytes - bytes_read);
+	}
 	memset(kpage + page_read_bytes, 0, page_zero_bytes);
+
+	// VM_FILE 페이지라면 file 정보를 page->file에 저장 (munmap에서 사용)
+	if (page->operations->type == VM_FILE)
+	{
+		page->file.file = file;
+		page->file.offset = offset;
+		page->file.page_read_bytes = page_read_bytes;
+		free(aux);
+	}
+	else
+	{
+		// VM_ANON 페이지는 파일을 닫음
+		free(aux);
+		file_close(file);
+	}
+
 	if (lock_acquired)
 	{
 		lock_release(&filesys_lock);
 	}
-	file_close(file);
 	return true;
 }
 
@@ -908,102 +931,139 @@ setup_stack(struct intr_frame *if_)
 
 void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
 {
-	if (!addr || !is_user_vaddr(addr) || !is_user_vaddr(pg_round_up(addr + length)) || addr != pg_round_down(addr) ||
-		spt_find_page(&thread_current()->spt, addr) || !length)
+	struct thread *cur = thread_current();
+	if (!addr || addr != pg_round_down(addr) || !length || fd < 0 || fd >= cur->fd_table_size || offset < 0 || offset % PGSIZE != 0)
 	{
 		return MAP_FAILED;
 	}
-	struct file *file = thread_current()->fd_table[fd];
-	if (file == STDIN || file == STDOUT)
+	struct file *file = cur->fd_table[fd];
+	if (file == STDIN || file == STDOUT || offset >= file_length(file) || file_length(file) == 0)
+	{
 		return MAP_FAILED;
+	}
 	uint8_t *upage = (uint8_t *)addr;
-	// vm_alloc_page_with_initializer();
+	uint8_t *start_page = upage;
+
 	while (length > 0)
 	{
-		/* Do calculate how to fill this page.
-		 * We will read PAGE_READ_BYTES bytes from FILE
-		 * and zero the final PAGE_ZERO_BYTES bytes. */
-		size_t page_read_bytes = length < PGSIZE ? length : PGSIZE;
-		size_t page_zero_bytes = PGSIZE - page_read_bytes;
+		if (!is_user_vaddr(upage) || spt_find_page(&cur->spt, upage))
+		{
+			goto rollback;
+		}
 
-		/* TODO: Set up aux to pass information to the lazy_load_segment. */
+		size_t page_read_bytes = length < PGSIZE ? length : PGSIZE;
+
 		struct new_aux *aux = (struct new_aux *)malloc(sizeof(struct new_aux));
 		if (aux == NULL)
 		{
-			return MAP_FAILED;
+			goto rollback;
 		}
+
 		struct file *reopened_file = file_reopen(file);
 		if (reopened_file == NULL)
 		{
-			free(aux); // 이전에 malloc된 aux가 있다면 해제
-			return MAP_FAILED;
+			free(aux);
+			goto rollback;
 		}
+
+		// mmap의 경우 deny_write를 호출하지 않음 (write-back이 필요하므로)
+		// file_deny_write(reopened_file);
+
 		aux->file = reopened_file;
 		aux->offset = offset;
 		aux->page_read_bytes = page_read_bytes;
-		if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, aux))
+
+		if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, lazy_load_segment, aux))
 		{
-			// 앞에 할당한 페이지들 삭제 dealloc
 			free(aux);
 			file_close(reopened_file);
-			return MAP_FAILED;
+			goto rollback;
 		}
 
-		/* Advance. */
+		spt_find_page(&cur->spt, upage)->mapped_page_count = 0;
 		length -= page_read_bytes;
 		upage += PGSIZE;
-		offset += page_read_bytes; // seek를 매번 해야하니까 오프셋도 변경해야함
+		offset += page_read_bytes;
+		struct page *fir_page = spt_find_page(&cur->spt, addr);
+		fir_page->mapped_page_count++;
 	}
 	return addr;
+
+rollback:
+	// 실패 시 이미 할당한 페이지들 정리 (역순으로)
+	while (upage > start_page)
+	{
+		upage -= PGSIZE;
+		struct page *page = spt_find_page(&cur->spt, upage);
+		if (page && page->operations->type == VM_UNINIT)
+		{
+			struct new_aux *aux = (struct new_aux *)page->uninit.aux;
+			if (aux)
+			{
+				file_close(aux->file);
+				free(aux);
+			}
+			// SPT에서 제거 (vm_dealloc_page는 destroy 후 free만 함)
+			hash_delete(&cur->spt.spt_hash, &page->hash_elem);
+			free(page);
+		}
+	}
+	return MAP_FAILED;
 }
-/*
-### 역할:
-- 파일 디스크립터 `fd`로 열린 파일의 **offset 바이트부터 length 바이트만큼**
-- 프로세스의 **가상 주소 공간의 addr부터** 매핑
-- 매핑은 페이지 단위로 이루어짐
-
-### 처리 방법:
-- 파일의 길이가 PGSIZE(4096바이트)의 배수가 아니라면,마지막 페이지는 일부만 유효하고, **나머지 바이트는 0으로 초기화**
-- 언매핑 시, **0으로 채워진 부분은 파일에 반영하지 않아야 함**
-- 매핑이 성공하면 **매핑된 가상 주소(addr)를 반환**, 실패 시 **NULL 반환**
-
-
-### 실패 조건:
-- `fd`로 열린 파일의 **길이가 0바이트**면 실패
-- `addr`이 페이지 정렬되지 않았으면 실패
-	- 4KB align 말하는듯
-- 매핑하려는 페이지 영역이 이미 다른 영역(스택, 실행 파일 등)과 **겹치면 실패**
-	- 이걸 어떻게 확인하지?? SPT??
-
-> ✔️ Lazy loading으로 메모리 매핑된 페이지를 할당해야 합니다.
->
-> `vm_alloc_page_with_initializer()` 또는 `vm_alloc_page()`를 사용할 수 있습니다.
-*/
 
 void munmap(void *addr)
 {
+	struct supplemental_page_table *spt = &thread_current()->spt;
+	struct page *page = spt_find_page(spt, addr);
+	if (!page)
+		return;
+
+	int count = page->mapped_page_count;
+	for (int i = 0; i < count; i++)
+	{
+		if (page)
+		{
+			// 1. 페이지가 메모리에 로드되었는지 확인
+			if (page->frame != NULL)
+			{
+				// 2. Dirty bit 확인
+				if (pml4_is_dirty(thread_current()->pml4, page->va))
+				{
+					// 3. page->file에서 파일 정보 가져오기
+					struct file_page *file_page = &page->file;
+
+					// 4. Write-back (page_read_bytes만큼만)
+					lock_acquire(&filesys_lock);
+					file_write_at(file_page->file, page->frame->kva, file_page->page_read_bytes, file_page->offset);
+					lock_release(&filesys_lock);
+				}
+
+				// 5. 파일 닫기 (dirty 여부 상관없이)
+				struct file_page *file_page = &page->file;
+				lock_acquire(&filesys_lock);
+				file_close(file_page->file);
+				lock_release(&filesys_lock);
+				file_page->file = NULL; // destroy에서 다시 닫지 않도록 NULL 설정
+			}
+			else
+			{
+				// 페이지가 로드되지 않은 경우 (아직 uninit 상태)
+				if (page->operations->type == VM_UNINIT)
+				{
+					// aux에서 파일 정보 가져와서 닫기
+					struct new_aux *aux = (struct new_aux *)page->uninit.aux;
+					lock_acquire(&filesys_lock);
+					file_close(aux->file);
+					lock_release(&filesys_lock);
+					free(aux);
+				}
+			}
+
+			// 6. 페이지 삭제
+			destroy(page);
+		}
+		addr += PGSIZE;
+		page = spt_find_page(spt, addr);
+	}
 }
-/*
-- `addr` 주소부터 시작된 매핑을 해제합니다.
-- 이 주소는 이전에 **`mmap()`으로 매핑된 주소여야 하며**,
-	**아직 해제되지 않은 주소여야 함**
----
-
-### 특징 및 처리:
-
-- 프로세스가 종료되면, 명시적 `munmap()` 없이도 **모든 매핑은 자동 해제**
-- 매핑 해제 시,
-	- **수정된 페이지는 파일에 반영**
-		- dirty bit 확인하고 write-back
-	- **수정되지 않은 페이지는 반영하지 않음**
-- 페이지는 보조 페이지 테이블(SPT)에서 제거
-
-> ⚠️ close()나 remove()로 파일을 닫더라도 해당 매핑은 해제되지 않습니다.
->
->
-> (Unix 시스템과 동일한 동작)
->
-> → 매핑은 명시적 `munmap()`이나 프로세스 종료 시까지 유효
->
-*/
 #endif /* VM */
