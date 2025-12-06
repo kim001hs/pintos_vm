@@ -105,11 +105,10 @@ spt_find_page(struct supplemental_page_table *spt, void *va)
 {
 	struct page *page;
 	/* TODO: Fill this function. */
-	struct page *temp = malloc(sizeof(struct page));
-	temp->va = pg_round_down(va);
+	struct page temp;
+	temp.va = pg_round_down(va);
 
-	struct hash_elem *e = hash_find(&spt->spt_hash, &temp->hash_elem);
-	free(temp);
+	struct hash_elem *e = hash_find(&spt->spt_hash, &temp.hash_elem);
 	if (e == NULL)
 	{
 		return NULL;
