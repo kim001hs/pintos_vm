@@ -46,8 +46,8 @@ static struct frame *vm_evict_frame(void);
 반드시 이 함수 또는 vm_alloc_page 를 통해 만들어라. */
 bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writable,
 									vm_initializer *init, void *aux) //anon_page:init,aux 없음
-{ //기능: initializer 이용해 페이지를 할당한다.
-	ASSERT(VM_TYPE(type) != VM_UNINIT)
+{ //기능: initializer 이용해 페이지를 할당한다. > UNINIT(초기화하지않은) 페이지 객체 생성 (느린로딩 위한 메타데이터 초기화)
+	ASSERT(VM_TYPE(type) != VM_UNINIT) //uninit타입이 아니어야함?
 
 	struct supplemental_page_table *spt = &thread_current()->spt;
 
@@ -57,9 +57,41 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 		/* TODO: 페이지를 생성하고, VM 타입에 따라 적절한 initializer를 가져와라.
 		그 다음 uninit_new 를 호출해서 "uninit" 페이지 구조체를 만들어라.
 		uninit_new 를 호출한 뒤에, 그 구조체의 필드들을 수정해야 한다. */
-		//void *va = upage.
-		//vm_claim_page();
+		// 1: page 구조체 생성 ========
+		struct page *p = malloc(sizeof(*p));
+		if (p == NULL){
+			goto err;
+		}
+		// 2: 초기화 (+필드 수정) ========
+		bool (*page_initializer)(struct page *, enum vm_type, void *kva) = NULL;
+
+		switch (VM_TYPE(type)){
+			case VM_ANON:
+				page_initializer = anon_initializer;
+				break;
+			case VM_FILE:
+				page_initializer = file_backed_initializer;
+				break;
+			default:
+				free(p);
+				goto err;
+		}
+		if (page_initializer == NULL){
+			free(p);
+			goto err;
+		}
+		uninit_new(p, upage, init, type, aux, page_initializer);
+	
+		p->writable = writable;
+
 		/* TODO: Insert the page into the spt. */
+		// 3: spt에 page 삽입 ========
+		if (spt_insert_page(&thread_current()->spt, p) == NULL){
+			free(p);
+			goto err;
+		}
+		
+		return true;
 	}
 err:
 	return false;
@@ -140,13 +172,16 @@ vm_get_frame(void)
 	/* TODO: Fill this function. */
 
 	// 1: palloc으로 페이지 할당받기
-	struct page *p = palloc_get_page(PAL_USER);
+	void *p = palloc_get_page(PAL_USER);
 	if (p == NULL){
 		PANIC("[vm_get_frame] todo"); //추후 swap-out 구현 필요
 	}
 
 	// 2: 프레임도 할당받고 멤버들 초기화
 	frame = malloc(sizeof(struct frame));
+	// if (frame == NULL){ >> 넣어야한다고함
+	// 	return NULL;
+	// }
 	frame->page = NULL; //아직 넣지 않음
 	frame->kva = p;
 
