@@ -47,13 +47,16 @@ file_backed_swap_in(struct page *page, void *kva)
 	int bytes_read = file_read(file_page->file, kva, file_page->page_read_bytes);
 	lock_release(&filesys_lock);
 
-	if (bytes_read != (int)file_page->page_read_bytes)
+	// 파일이 비어있거나 짧은 경우, 읽은 만큼만 사용하고 나머지는 0으로 채움
+	if (bytes_read < (int)file_page->page_read_bytes)
 	{
-		return false;
+		memset(kva + bytes_read, 0, PGSIZE - bytes_read);
 	}
-
-	// 나머지 부분은 0으로 채움
-	memset(kva + file_page->page_read_bytes, 0, PGSIZE - file_page->page_read_bytes);
+	else
+	{
+		// 나머지 부분은 0으로 채움
+		memset(kva + file_page->page_read_bytes, 0, PGSIZE - file_page->page_read_bytes);
+	}
 
 	return true;
 }

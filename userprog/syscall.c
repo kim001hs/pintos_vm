@@ -44,6 +44,8 @@ static void s_close(int fd);
 
 static void s_check_access(const char *file);
 static void s_check_buffer(const void *buffer, unsigned length);
+static void s_check_writable_buffer(void *buffer, unsigned length);
+static void s_check_buffer(const void *buffer, unsigned length);
 static int realloc_fd_table(struct thread *t);
 static void s_check_fd(int fd);
 // extra
@@ -288,7 +290,7 @@ static int s_filesize(int fd)
 
 static int s_read(int fd, void *buffer, unsigned length)
 {
-	s_check_buffer(buffer, length);
+	s_check_writable_buffer(buffer, length);
 	s_check_fd(fd);
 	int bytes_read = 0;
 
@@ -448,6 +450,22 @@ static void s_check_access(const char *file)
 }
 
 static void s_check_buffer(const void *buffer, unsigned length)
+{
+	if (buffer == NULL)
+		s_exit(-1);
+	const uint8_t *start = (const uint8_t *)buffer;
+	const uint8_t *end = start + length - 1;
+
+	for (const uint8_t *p = pg_round_down(start); p <= pg_round_down(end); p += PGSIZE)
+	{
+		s_check_access(p);
+		// Note: We don't check writable here because this function is used for both
+		// read and write system calls. For write(), the buffer is only read (not written),
+		// so read-only buffers are fine.
+	}
+}
+
+static void s_check_writable_buffer(void *buffer, unsigned length)
 {
 	if (buffer == NULL)
 		s_exit(-1);

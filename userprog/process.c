@@ -780,6 +780,7 @@ lazy_load_segment(struct page *page, struct new_aux *aux)
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+
 	bool lock_acquired = false;
 	if (!lock_held_by_current_thread(&filesys_lock))
 	{
@@ -809,6 +810,7 @@ lazy_load_segment(struct page *page, struct new_aux *aux)
 	int bytes_read = file_read(file, kpage, page_read_bytes);
 	if (bytes_read < 0)
 	{
+		printf("DEBUG lazy_load: read failed with %d\n", bytes_read);
 		free(aux);
 		if (lock_acquired)
 		{
@@ -937,12 +939,17 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
 		return MAP_FAILED;
 	}
 	struct file *file = cur->fd_table[fd];
-	if (file == STDIN || file == STDOUT || offset >= file_length(file) || file_length(file) == 0)
+	if (file == STDIN || file == STDOUT)
 	{
 		return MAP_FAILED;
 	}
 	uint8_t *upage = (uint8_t *)addr;
 	uint8_t *start_page = upage;
+
+	// Get the actual file length to limit reads
+	lock_acquire(&filesys_lock);
+	off_t actual_file_length = file_length(file);
+	lock_release(&filesys_lock);
 
 	while (length > 0)
 	{
@@ -951,7 +958,17 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
 			goto rollback;
 		}
 
+		// Calculate how many bytes to read from this page
+		// Limited by: 1) remaining length, 2) PGSIZE, 3) remaining file bytes
+		off_t remaining_file_bytes = actual_file_length - offset;
+		if (remaining_file_bytes < 0)
+			remaining_file_bytes = 0;
+
 		size_t page_read_bytes = length < PGSIZE ? length : PGSIZE;
+		if (page_read_bytes > (size_t)remaining_file_bytes)
+			page_read_bytes = remaining_file_bytes;
+
+		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		struct new_aux *aux = (struct new_aux *)malloc(sizeof(struct new_aux));
 		if (aux == NULL)
@@ -981,9 +998,13 @@ void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
 		}
 
 		spt_find_page(&cur->spt, upage)->mapped_page_count = 0;
-		length -= page_read_bytes;
+
+		// Advance by page size (or remaining length if less than a page)
+		size_t advance = length < PGSIZE ? length : PGSIZE;
+		length -= advance;
 		upage += PGSIZE;
-		offset += page_read_bytes;
+		offset += page_read_bytes; // offset advances by actual bytes read, not full page
+
 		struct page *fir_page = spt_find_page(&cur->spt, addr);
 		fir_page->mapped_page_count++;
 	}
@@ -1021,49 +1042,13 @@ void munmap(void *addr)
 	int count = page->mapped_page_count;
 	for (int i = 0; i < count; i++)
 	{
-		if (page)
-		{
-			// 1. 페이지가 메모리에 로드되었는지 확인
-			if (page->frame != NULL)
-			{
-				// 2. Dirty bit 확인
-				if (pml4_is_dirty(thread_current()->pml4, page->va))
-				{
-					// 3. page->file에서 파일 정보 가져오기
-					struct file_page *file_page = &page->file;
-
-					// 4. Write-back (page_read_bytes만큼만)
-					lock_acquire(&filesys_lock);
-					file_write_at(file_page->file, page->frame->kva, file_page->page_read_bytes, file_page->offset);
-					lock_release(&filesys_lock);
-				}
-
-				// 5. 파일 닫기 (dirty 여부 상관없이)
-				struct file_page *file_page = &page->file;
-				lock_acquire(&filesys_lock);
-				file_close(file_page->file);
-				lock_release(&filesys_lock);
-				file_page->file = NULL; // destroy에서 다시 닫지 않도록 NULL 설정
-			}
-			else
-			{
-				// 페이지가 로드되지 않은 경우 (아직 uninit 상태)
-				if (page->operations->type == VM_UNINIT)
-				{
-					// aux에서 파일 정보 가져와서 닫기
-					struct new_aux *aux = (struct new_aux *)page->uninit.aux;
-					lock_acquire(&filesys_lock);
-					file_close(aux->file);
-					lock_release(&filesys_lock);
-					free(aux);
-				}
-			}
-
-			// 6. 페이지 삭제
-			destroy(page);
-		}
-		addr += PGSIZE;
 		page = spt_find_page(spt, addr);
+		if (!page)
+			break;
+
+		// Let destroy handle write-back and file closing
+		spt_remove_page(spt, page);
+		addr += PGSIZE;
 	}
 }
 #endif /* VM */

@@ -10,6 +10,10 @@
 
 #include "vm/vm.h"
 #include "vm/uninit.h"
+#include "userprog/process.h"
+#include "userprog/syscall.h"
+#include "filesys/file.h"
+#include <stdlib.h>
 
 static bool uninit_initialize(struct page *page, void *kva);
 static void uninit_destroy(struct page *page);
@@ -66,4 +70,17 @@ uninit_destroy(struct page *page)
 	struct uninit_page *uninit UNUSED = &page->uninit;
 	/* TODO: Fill this function.
 	 * TODO: If you don't have anything to do, just return. */
+
+	// If aux contains a file handle (for file-backed pages), clean it up
+	if (uninit->type == VM_FILE && uninit->aux != NULL)
+	{
+		struct new_aux *aux = (struct new_aux *)uninit->aux;
+		if (aux->file != NULL)
+		{
+			lock_acquire(&filesys_lock);
+			file_close(aux->file);
+			lock_release(&filesys_lock);
+		}
+		free(aux);
+	}
 }
