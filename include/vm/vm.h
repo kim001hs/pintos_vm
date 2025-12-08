@@ -51,7 +51,9 @@ struct page
 	/* Your implementation */
 	struct hash_elem hash_elem;
 	bool writable;
+	int mapped_page_count;
 	int last_used_tick;
+	uint64_t *pml4; /* Owner's page table */
 	/* Per-type data are binded into the union.
 	 * Each function automatically detects the current union */
 	union

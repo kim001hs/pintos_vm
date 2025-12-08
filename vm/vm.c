@@ -9,6 +9,7 @@
 #include "threads/mmu.h"
 #include "devices/timer.h"
 #include <string.h>
+#include <stdio.h>
 #include "userprog/syscall.h"
 #include "userprog/process.h"
 #include "filesys/file.h"
@@ -87,6 +88,7 @@ bool vm_alloc_page_with_initializer(enum vm_type type, void *upage, bool writabl
 		uninit_new(new_page, upage, init, type, aux, page_initializer);
 		new_page->writable = writable;
 		new_page->last_used_tick = timer_ticks();
+		new_page->pml4 = thread_current()->pml4;
 		/* TODO: Insert the page into the spt. */
 		if (!spt_insert_page(spt, new_page))
 		{
@@ -143,7 +145,22 @@ vm_get_victim(void)
 
 	if (!list_empty(&frame_table))
 	{
-		victim = list_entry(list_max(&frame_table, lru_less, NULL), struct frame, frame_elem);
+		// LRU: find frame with minimum last_used_tick that has a page
+		struct list_elem *e;
+		uint64_t min_tick = UINT64_MAX;
+		for (e = list_begin(&frame_table); e != list_end(&frame_table); e = list_next(e))
+		{
+			struct frame *f = list_entry(e, struct frame, frame_elem);
+			if (f->page != NULL)
+			{
+				uint64_t tick = f->page->last_used_tick;
+				if (tick < min_tick)
+				{
+					min_tick = tick;
+					victim = f;
+				}
+			}
+		}
 	}
 	return victim;
 }
@@ -187,6 +204,7 @@ vm_get_frame(void)
 		frame = (struct frame *)malloc(sizeof(struct frame));
 		if (frame == NULL)
 		{
+			palloc_free_page(new_kva);
 			return NULL;
 		}
 		frame->kva = new_kva;
@@ -197,7 +215,8 @@ vm_get_frame(void)
 	{
 		frame = vm_evict_frame();
 	}
-	ASSERT(frame != NULL);
+	if (frame == NULL)
+		PANIC("vm_get_frame: failed to get frame");
 	ASSERT(frame->page == NULL);
 	return frame;
 }
@@ -248,7 +267,12 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
 	{
 		return false;
 	}
-	return vm_do_claim_page(page);
+	bool result = vm_do_claim_page(page);
+	if (result)
+	{
+		page->last_used_tick = timer_ticks();
+	}
+	return result;
 }
 
 /* Free the page.
