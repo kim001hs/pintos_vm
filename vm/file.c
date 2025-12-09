@@ -73,6 +73,7 @@ file_backed_swap_out(struct page *page)
 
 	// 페이지 테이블 엔트리 제거
 	pml4_clear_page(page->pml4, page->va);
+	page->frame = NULL;
 	return true;
 }
 
@@ -93,13 +94,18 @@ file_backed_destroy(struct page *page)
 			lock_release(&filesys_lock);
 		}
 	}
-
+	if (page->frame == NULL)
+		return;
+	page->frame->ref_count--;
 	// 파일 핸들 닫기 (메모리에 있든 없든 항상 닫아야 함)
-	if (file_page->file != NULL)
+	if (file_page->file != NULL && page->frame->ref_count < 1)
 	{
 		lock_acquire(&filesys_lock);
 		file_close(file_page->file);
+		list_remove(&page->frame->frame_elem);
+		palloc_free_page(page->frame->kva);
 		lock_release(&filesys_lock);
+		free(page->frame);
 		file_page->file = NULL;
 	}
 }

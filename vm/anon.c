@@ -102,7 +102,6 @@ anon_swap_out(struct page *page)
 
 	// 페이지 테이블에서 매핑 제거
 	pml4_clear_page(page->pml4, page->va);
-	// page->frame은 vm_evict_frame에서 NULL로 설정됨
 
 	return true;
 }
@@ -119,9 +118,11 @@ anon_destroy(struct page *page)
 		bitmap_set(swap_table, anon_page->swap_index, false);
 		anon_page->swap_index = -1;
 	}
-
+	if (page->frame == NULL)
+		return;
+	page->frame->ref_count--;
 	// 페이지가 메모리에 있으면 프레임 해제
-	if (page->frame != NULL)
+	if (page->frame->ref_count < 1)
 	{
 		pml4_clear_page(page->pml4, page->va);
 		list_remove(&page->frame->frame_elem);

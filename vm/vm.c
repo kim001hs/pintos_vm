@@ -151,7 +151,7 @@ vm_get_victim(void)
 		for (e = list_begin(&frame_table); e != list_end(&frame_table); e = list_next(e))
 		{
 			struct frame *f = list_entry(e, struct frame, frame_elem);
-			if (f->page != NULL)
+			if (f->page != NULL && f->ref_count == 1)
 			{
 				uint64_t tick = f->page->last_used_tick;
 				if (tick < min_tick)
@@ -209,6 +209,7 @@ vm_get_frame(void)
 		}
 		frame->kva = new_kva;
 		frame->page = NULL;
+		frame->ref_count = 1;
 		list_push_back(&frame_table, &frame->frame_elem);
 	}
 	else
@@ -233,8 +234,30 @@ vm_stack_growth(void *addr)
 
 /* Handle the fault on write_protected page */
 static bool
-vm_handle_wp(struct page *page UNUSED)
+vm_handle_wp(struct page *page)
 {
+	if (page == NULL)
+	{
+		return false;
+	}
+	struct frame *old_frame = page->frame;
+
+	// ref_count가 1이면 이 페이지를 사용하는 프로세스가 하나뿐이므로
+	// 새 프레임을 할당할 필요 없이 쓰기 권한만 복원
+	if (old_frame->ref_count == 1)
+	{
+		return pml4_set_page(page->pml4, page->va, old_frame->kva, page->writable);
+	}
+
+	// ref_count가 2 이상이면 실제로 페이지를 복사
+	struct frame *new_frame = vm_get_frame();
+	new_frame->page = page;
+	page->frame = new_frame;
+
+	memcpy(new_frame->kva, old_frame->kva, PGSIZE);
+	old_frame->ref_count--;
+
+	return pml4_set_page(page->pml4, page->va, page->frame->kva, page->writable);
 }
 
 /* Return true on success */
@@ -266,6 +289,16 @@ bool vm_try_handle_fault(struct intr_frame *f, void *addr, bool user, bool write
 	if (write && !page->writable)
 	{
 		return false;
+	}
+	// COW: write fault on a read-only page with a frame (shared)
+	if (write && !not_present && page->frame != NULL && page->frame->ref_count > 1)
+	{
+		return vm_handle_wp(page);
+	}
+	// COW: page is marked read-only temporarily for COW, but actually writable
+	if (write && !not_present && page->frame != NULL && page->frame->ref_count == 1 && page->writable)
+	{
+		return vm_handle_wp(page);
 	}
 	bool result = vm_do_claim_page(page);
 	if (result)
@@ -360,17 +393,44 @@ bool supplemental_page_table_copy(struct supplemental_page_table *dst, struct su
 		}
 		else if (type == VM_ANON || type == VM_FILE)
 		{
-			// 이미 claim된 페이지는 물리 메모리를 복사
-			if (!vm_alloc_page(type, src_page->va, src_page->writable))
+			// 실제 materialized된 페이지만 여기서 처리
+			if (src_page->frame == NULL)
+			{
+				// frame이 없으면 UNINIT이거나 swap out된 페이지
+				// 이 경우는 위의 UNINIT 처리에서 다뤄야 함
+				continue;
+			}
+			// 그냥 부모 페이지를 복사
+			struct page *dst_page = (struct page *)malloc(sizeof(struct page));
+			if (!dst_page)
 			{
 				return false;
 			}
-			if (!vm_claim_page(src_page->va))
+			memcpy(dst_page, src_page, sizeof(struct page));
+			dst_page->pml4 = thread_current()->pml4;
+			if (type == VM_FILE)
 			{
-				return false;
+				dst_page->file.file = file_reopen(src_page->file.file);
 			}
-			struct page *dst_page = spt_find_page(dst, src_page->va);
-			memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
+			src_page->frame->ref_count++;
+			if (!spt_insert_page(dst, dst_page))
+				return false;
+			if (!pml4_set_page(src_page->pml4, src_page->va, src_page->frame->kva, false))
+				return false;
+			if (!pml4_set_page(dst_page->pml4, dst_page->va, src_page->frame->kva, false))
+				return false;
+
+			// //  이미 claim된 페이지는 물리 메모리를 복사
+			// if (!vm_alloc_page(type, src_page->va, src_page->writable))
+			// {
+			// 	return false;
+			// }
+			// if (!vm_claim_page(src_page->va))
+			// {
+			// 	return false;
+			// }
+			// struct page *dst_page = spt_find_page(dst, src_page->va);
+			// memcpy(dst_page->frame->kva, src_page->frame->kva, PGSIZE);
 		}
 	}
 	return true;
@@ -394,20 +454,6 @@ bool hash_less(const struct hash_elem *a, const struct hash_elem *b, void *aux U
 	struct page *pa = hash_entry(a, struct page, hash_elem);
 	struct page *pb = hash_entry(b, struct page, hash_elem);
 	return pa->va < pb->va;
-}
-
-bool lru_less(const struct list_elem *a, const struct list_elem *b, void *aux UNUSED)
-{
-	struct frame *fa = list_entry(a, struct frame, frame_elem);
-	struct frame *fb = list_entry(b, struct frame, frame_elem);
-
-	struct page *pa = fa->page;
-	struct page *pb = fb->page;
-
-	int a_tick = pa ? pa->last_used_tick : 0;
-	int b_tick = pb ? pb->last_used_tick : 0;
-
-	return a_tick < b_tick;
 }
 
 void hash_destructor(struct hash_elem *e, void *aux)
