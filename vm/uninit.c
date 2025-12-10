@@ -10,6 +10,8 @@
 
 #include "vm/vm.h"
 #include "vm/uninit.h"
+#include "userprog/process.h"
+#include "userprog/syscall.h"
 
 static bool uninit_initialize(struct page *page, void *kva);
 static void uninit_destroy(struct page *page);
@@ -66,4 +68,18 @@ uninit_destroy(struct page *page)
 	struct uninit_page *uninit UNUSED = &page->uninit;
 	/* TODO: Fill this function.
 	 * TODO: If you don't have anything to do, just return. */
+	struct new_aux *aux = (struct new_aux *)uninit->aux;
+	if (aux)
+	{
+		if (aux->file != NULL)
+		{
+			bool need_lock = !lock_held_by_current_thread(&filesys_lock);
+			if (need_lock)
+				lock_acquire(&filesys_lock);
+			file_close(aux->file);
+			if (need_lock)
+				lock_release(&filesys_lock);
+		}
+		free(aux);
+	}
 }

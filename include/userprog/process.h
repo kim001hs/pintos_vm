@@ -2,6 +2,7 @@
 #define USERPROG_PROCESS_H
 
 #include "threads/thread.h"
+#include "filesys/off_t.h"
 
 tid_t process_create_initd(const char *file_name);
 tid_t process_fork(const char *name, struct intr_frame *if_);
@@ -17,4 +18,16 @@ struct aux
     struct intr_frame *if_;
     struct thread *thread;
 };
+
+struct new_aux
+{
+    struct file *file;
+    off_t offset;
+    size_t page_read_bytes;
+};
+#ifdef VM
+#define MAP_FAILED ((void *)NULL)
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset);
+void munmap(void *addr);
+#endif
 #endif /* userprog/process.h */

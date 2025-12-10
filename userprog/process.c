@@ -22,6 +22,7 @@
 #include "devices/timer.h"
 #include "lib/stdio.h"
 #include "threads/malloc.h"
+#include "userprog/syscall.h"
 
 #ifdef VM
 #include "vm/vm.h"
@@ -269,7 +270,9 @@ int process_exec(void *f_name)
 
 	/* We first kill the current context */
 	process_cleanup();
-
+#ifdef VM
+	supplemental_page_table_init(&thread_current()->spt);
+#endif
 	/* And then load the binary */
 	success = load(file_name, &_if);
 
@@ -363,6 +366,7 @@ process_cleanup(void)
 
 #ifdef VM
 	supplemental_page_table_kill(&curr->spt);
+	return;
 #endif
 
 	uint64_t *pml4;
@@ -772,11 +776,70 @@ install_page(void *upage, void *kpage, bool writable)
  * upper block. */
 
 static bool
-lazy_load_segment(struct page *page, void *aux)
+lazy_load_segment(struct page *page, struct new_aux *aux)
 {
 	/* TODO: Load the segment from the file */
 	/* TODO: This called when the first page fault occurs on address VA. */
 	/* TODO: VA is available when calling this function. */
+	bool lock_acquired = false;
+	if (!lock_held_by_current_thread(&filesys_lock))
+	{
+		lock_acquire(&filesys_lock);
+		lock_acquired = true;
+	}
+	size_t page_read_bytes = aux->page_read_bytes;
+	size_t page_zero_bytes = PGSIZE - page_read_bytes;
+	struct file *file = aux->file;
+	off_t offset = aux->offset;
+	file_seek(file, offset);
+	/* Get a page of memory. */
+	uint8_t *kpage = page->frame->kva;
+	if (kpage == NULL)
+	{
+		if (lock_acquired)
+		{
+			lock_release(&filesys_lock);
+		}
+		free(aux);
+		file_close(file);
+		return false;
+	}
+
+	/* Load this page. */
+	int bytes_read = file_read(file, kpage, page_read_bytes);
+	if (bytes_read < 0)
+	{
+		if (lock_acquired)
+		{
+			lock_release(&filesys_lock);
+		}
+		free(aux);
+		file_close(file);
+		return false;
+	}
+	// 파일 끝에 도달한 경우, 나머지는 0으로 채움
+	if (bytes_read < (int)page_read_bytes)
+	{
+		memset(kpage + bytes_read, 0, page_read_bytes - bytes_read);
+	}
+	memset(kpage + page_read_bytes, 0, page_zero_bytes);
+	if (page->operations->type == VM_FILE)
+	{
+		page->file.file = file;
+		page->file.offset = offset;
+		page->file.page_read_bytes = page_read_bytes;
+		free(aux);
+	}
+	else
+	{
+		free(aux);
+		file_close(file);
+	}
+	if (lock_acquired)
+	{
+		lock_release(&filesys_lock);
+	}
+	return true;
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -810,15 +873,32 @@ load_segment(struct file *file, off_t ofs, uint8_t *upage,
 		size_t page_zero_bytes = PGSIZE - page_read_bytes;
 
 		/* TODO: Set up aux to pass information to the lazy_load_segment. */
-		void *aux = NULL;
-		if (!vm_alloc_page_with_initializer(VM_ANON, upage,
-											writable, lazy_load_segment, aux))
+		struct new_aux *aux = (struct new_aux *)malloc(sizeof(struct new_aux));
+		if (aux == NULL)
+		{
 			return false;
+		}
+		struct file *reopened_file = file_reopen(file);
+		if (reopened_file == NULL)
+		{
+			free(aux); // 이전에 malloc된 aux가 있다면 해제
+			return false;
+		}
+		aux->file = reopened_file;
+		aux->offset = ofs;
+		aux->page_read_bytes = page_read_bytes;
+		if (!vm_alloc_page_with_initializer(VM_ANON, upage, writable, lazy_load_segment, aux))
+		{
+			free(aux);
+			file_close(reopened_file);
+			return false;
+		}
 
 		/* Advance. */
 		read_bytes -= page_read_bytes;
 		zero_bytes -= page_zero_bytes;
 		upage += PGSIZE;
+		ofs += page_read_bytes; // seek를 매번 해야하니까 오프셋도 변경해야함
 	}
 	return true;
 }
@@ -834,8 +914,119 @@ setup_stack(struct intr_frame *if_)
 	 * TODO: If success, set the rsp accordingly.
 	 * TODO: You should mark the page is stack. */
 	/* TODO: Your code goes here */
-
+	if (vm_alloc_page(VM_ANON | VM_MARKER_0, stack_bottom, true))
+	{
+		success = vm_claim_page(stack_bottom);
+		if (success)
+		{
+			if_->rsp = USER_STACK;
+		}
+	}
 	return success;
 }
 
+void *mmap(void *addr, size_t length, int writable, int fd, off_t offset)
+{
+	struct thread *cur = thread_current();
+	if (!addr || addr != pg_round_down(addr) || !length || fd < 0 ||
+		fd >= cur->fd_table_size || offset < 0 || offset % PGSIZE != 0)
+	{
+		return MAP_FAILED;
+	}
+	struct file *file = cur->fd_table[fd];
+	if (!file || file == STDIN || file == STDOUT)
+	{
+		return MAP_FAILED;
+	}
+	uint8_t *upage = (uint8_t *)addr;
+	uint8_t *start_page = upage;
+
+	lock_acquire(&filesys_lock);
+	off_t actual_file_length = file_length(file);
+	lock_release(&filesys_lock);
+
+	if (actual_file_length == 0)
+	{
+		return MAP_FAILED;
+	}
+
+	while (length > 0)
+	{
+		if (!is_user_vaddr(upage) || spt_find_page(&cur->spt, upage))
+		{
+			goto rollback;
+		}
+		/* Do calculate how to fill this page.
+		 * We will read PAGE_READ_BYTES bytes from FILE
+		 * and zero the final PAGE_ZERO_BYTES bytes. */
+		size_t page_read_bytes = length < PGSIZE ? length : PGSIZE;
+		size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
+		off_t remaining_file_bytes = actual_file_length - offset;
+		if (page_read_bytes > (size_t)remaining_file_bytes)
+			page_read_bytes = remaining_file_bytes;
+
+		// Break if we've reached the end of the file
+		if (page_read_bytes == 0)
+			break;
+
+		/* TODO: Set up aux to pass information to the lazy_load_segment. */
+		struct new_aux *aux = (struct new_aux *)malloc(sizeof(struct new_aux));
+		if (aux == NULL)
+		{
+			goto rollback;
+		}
+		struct file *reopened_file = file_reopen(file);
+		if (reopened_file == NULL)
+		{
+			free(aux); // 이전에 malloc된 aux가 있다면 해제
+			goto rollback;
+		}
+		aux->file = reopened_file;
+		aux->offset = offset;
+		aux->page_read_bytes = page_read_bytes;
+		if (!vm_alloc_page_with_initializer(VM_FILE, upage, writable, lazy_load_segment, aux))
+		{
+			free(aux);
+			file_close(reopened_file);
+			goto rollback;
+		}
+
+		spt_find_page(&cur->spt, upage)->mapped_page_count = 0;
+		/* Advance. */
+		length -= page_read_bytes;
+		upage += PGSIZE;
+		offset += page_read_bytes; // seek를 매번 해야하니까 오프셋도 변경해야함
+
+		struct page *fir_page = spt_find_page(&cur->spt, addr);
+		fir_page->mapped_page_count++;
+	}
+	return addr;
+rollback:
+	// 실패 시 이미 할당한 페이지들 정리
+	munmap(start_page);
+	return MAP_FAILED;
+}
+
+void munmap(void *addr)
+{
+	if (!addr)
+		return;
+	struct supplemental_page_table *spt = &thread_current()->spt;
+	struct page *page = spt_find_page(spt, addr);
+	if (!page)
+		return;
+
+	int count = page->mapped_page_count;
+	for (int i = 0; i < count; i++)
+	{
+		page = spt_find_page(spt, addr);
+		if (!page)
+			break;
+
+		// Let destroy handle write-back and file closing
+		spt_remove_page(spt, page);
+		addr += PGSIZE;
+	}
+}
 #endif /* VM */
